@@ -41,6 +41,10 @@ class TemplateCandidate:
         lower = self.path.name.lower()
         return lower == f"app_{self.app_id}.vdf" or lower == f"{self.app_id}.vdf"
 
+    @property
+    def is_workshop(self) -> bool:
+        return "/steamapps/workshop/content/241100/" in str(self.path).lower().replace("\\", "/")
+
 
 class Plugin:
     def __init__(self) -> None:
@@ -138,7 +142,7 @@ class Plugin:
         )
         original = source.path.read_text(encoding="utf-8", errors="ignore")
         self._log(f"[mirror] source bytes={len(original.encode('utf-8', errors='ignore'))} chars={len(original)}")
-        self._log_source_layout_metadata(original)
+        self._log_source_layout_metadata(original, source.path)
         mirrored, swaps = self._build_mirrored_template(
             original,
             mirror_dpad=mirror_dpad,
@@ -312,11 +316,19 @@ class Plugin:
 
         self._log_candidate_preview("console", fresh_candidates, limit=6)
 
-        for candidate in fresh_candidates:
+        preferred_kinds = ("steam_controller_configs", "userdata", "workshop", "unknown")
+        prioritized = sorted(
+            fresh_candidates,
+            key=lambda candidate: preferred_kinds.index(candidate.source_kind)
+            if candidate.source_kind in preferred_kinds
+            else len(preferred_kinds),
+        )
+
+        for candidate in prioritized:
             if candidate.app_id == requested_app_id:
                 return candidate
 
-        for candidate in fresh_candidates:
+        for candidate in prioritized:
             if candidate.app_id > 0:
                 self._log(
                     "[mirror] console fallback app_id mismatch "
@@ -324,7 +336,7 @@ class Plugin:
                 )
                 return candidate
 
-        return fresh_candidates[0]
+        return prioritized[0]
 
     def _steam_console_log_paths(self) -> Iterable[Path]:
         homes = self._steam_home_candidates()
@@ -387,6 +399,9 @@ class Plugin:
         return app_id, path, timestamp
 
     def _infer_source_from_path(self, file_path: Path) -> tuple[str, Path]:
+        normalized = str(file_path).lower().replace("\\", "/")
+        if "/steamapps/workshop/content/241100/" in normalized:
+            return "workshop", file_path.parent
         for parent in file_path.parents:
             if parent.name == "controller_configs":
                 return "userdata", parent
@@ -410,18 +425,19 @@ class Plugin:
         age_seconds = datetime.now().timestamp() - timestamp
         return age_seconds <= max_hours * 3600
 
-    def _log_source_layout_metadata(self, layout_text: str) -> None:
+    def _log_source_layout_metadata(self, layout_text: str, source_path: Path) -> None:
         title = self._extract_vdf_value(layout_text, "title")
         export_type = self._extract_vdf_value(layout_text, "export_type")
         progenitor = self._extract_vdf_value(layout_text, "progenitor")
         url = self._extract_vdf_value(layout_text, "url")
         publishedfileid = self._extract_vdf_value(layout_text, "publishedfileid")
         steam_url = self._extract_steam_controller_url(layout_text)
+        workshop_id = self._extract_workshop_id(layout_text, source_path)
         self._log(
             "[mirror] source meta "
             f"title={title or '-'} export_type={export_type or '-'} "
             f"progenitor={progenitor or '-'} publishedfileid={publishedfileid or '-'} "
-            f"url={url or '-'} steam_url={steam_url or '-'}"
+            f"url={url or '-'} steam_url={steam_url or '-'} workshop_id={workshop_id or '-'}"
         )
 
     def _extract_vdf_value(self, text: str, key: str) -> str | None:
@@ -436,6 +452,13 @@ class Plugin:
         if not match:
             return None
         return match.group(1)
+
+    def _extract_workshop_id(self, text: str, source_path: Path) -> str | None:
+        for sample in (text, str(source_path)):
+            match = re.search(r"/steamapps/workshop/content/241100/(\d+)/", sample, flags=re.IGNORECASE)
+            if match:
+                return match.group(1)
+        return None
 
     def _collect_all_candidates(self, controller_root: Path, source_kind: str) -> list[TemplateCandidate]:
         out: list[TemplateCandidate] = []
@@ -611,18 +634,51 @@ class Plugin:
         out: list[Path] = []
 
         # Prefer user-specific template directories near discovered config roots.
+        for config_root in self._steam_controller_configs_roots():
+            out.extend(
+                [
+                    config_root / "templates",
+                    config_root / "template",
+                    config_root / "user_templates",
+                    config_root.parent / "templates",
+                    config_root.parent / "template",
+                    config_root.parent / "user_templates",
+                ]
+            )
+
+        for controller_root in self._controller_config_roots():
+            out.extend(
+                [
+                    controller_root / "templates",
+                    controller_root / "template",
+                    controller_root / "user_templates",
+                ]
+            )
+
         if source.source_kind == "steam_controller_configs":
             out.extend(
                 [
                     source.controller_root / "templates",
+                    source.controller_root / "template",
                     source.controller_root / "user_templates",
+                    source.controller_root.parent / "templates",
+                    source.controller_root.parent / "template",
+                    source.controller_root.parent / "user_templates",
                 ]
             )
         elif source.source_kind == "userdata":
             out.extend(
                 [
                     source.controller_root / "templates",
+                    source.controller_root / "template",
                     source.controller_root / "user_templates",
+                ]
+            )
+        elif source.source_kind == "workshop":
+            out.extend(
+                [
+                    source.path.parent / "templates",
+                    source.path.parent / "template",
                 ]
             )
 
