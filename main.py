@@ -143,8 +143,13 @@ class Plugin:
         output_path = self._build_output_path(
             output_dir=output_dir,
             source_path=source.path,
+            source_kind=source.source_kind,
         )
         self._log(f"[mirror] output_path chosen={output_path}")
+        if output_path == source.path:
+            backup_path = self._build_backup_path(output_dir, source.path)
+            self._write_text_verified(backup_path, original)
+            self._log(f"[mirror] source equals output; backup written to {backup_path}")
         self._write_text_verified(output_path, mirrored)
         self._log(f"[mirror] output_path written {self._path_state(output_path)}")
         self._log(f"[mirror] output_dir latest_vdf={self._latest_vdf_paths(output_dir, limit=8)}")
@@ -379,7 +384,14 @@ class Plugin:
 
     def _resolve_output_dir(self, source: TemplateCandidate, app_id: int) -> Path:
         if source.source_kind == "steam_controller_configs":
-            return source.path.parent
+            app_dir = source.controller_root / str(app_id)
+            if app_dir.is_dir():
+                return app_dir
+            try:
+                app_dir.mkdir(parents=True, exist_ok=True)
+                return app_dir
+            except OSError:
+                return source.path.parent
 
         controller_root = source.controller_root
         fallback_dir = source.path.parent
@@ -434,7 +446,11 @@ class Plugin:
                 f"mtime={mtime} path={candidate.path}"
             )
 
-    def _build_output_path(self, output_dir: Path, source_path: Path) -> Path:
+    def _build_output_path(self, output_dir: Path, source_path: Path, source_kind: str) -> Path:
+        if source_kind == "steam_controller_configs":
+            # Steam reliably picks up per-game layouts here when using canonical file names.
+            return output_dir / source_path.name
+
         now = datetime.now().strftime("%Y%m%d_%H%M%S")
         stem = source_path.stem
         suffix = source_path.suffix or ".vdf"
@@ -442,6 +458,17 @@ class Plugin:
         index = 1
         while candidate.exists():
             candidate = output_dir / f"{stem}_mirror_{now}_{index}{suffix}"
+            index += 1
+        return candidate
+
+    def _build_backup_path(self, output_dir: Path, source_path: Path) -> Path:
+        now = datetime.now().strftime("%Y%m%d_%H%M%S")
+        stem = source_path.stem
+        suffix = source_path.suffix or ".vdf"
+        candidate = output_dir / f"{stem}_pre_mirror_{now}{suffix}"
+        index = 1
+        while candidate.exists():
+            candidate = output_dir / f"{stem}_pre_mirror_{now}_{index}{suffix}"
             index += 1
         return candidate
 
