@@ -206,13 +206,6 @@ class Plugin:
 
     def _find_current_layout_for_app(self, app_id: int) -> TemplateCandidate | None:
         console_candidate = self._find_recent_loaded_layout_from_console(app_id)
-        if console_candidate is not None:
-            self._log(
-                "[mirror] selected from console log "
-                f"app_id={console_candidate.app_id} kind={console_candidate.source_kind} "
-                f"path={console_candidate.path}"
-            )
-            return console_candidate
 
         candidates: list[TemplateCandidate] = []
         fallback_candidates: list[TemplateCandidate] = []
@@ -264,7 +257,22 @@ class Plugin:
             )
             return chosen
 
+        if console_candidate is not None and console_candidate.source_kind != "workshop":
+            self._log(
+                "[mirror] selected from console log (non-workshop) "
+                f"app_id={console_candidate.app_id} kind={console_candidate.source_kind} "
+                f"path={console_candidate.path}"
+            )
+            return console_candidate
+
         if not fallback_candidates:
+            if console_candidate is not None:
+                self._log(
+                    "[mirror] no scanned candidates; selected from console log "
+                    f"app_id={console_candidate.app_id} kind={console_candidate.source_kind} "
+                    f"path={console_candidate.path}"
+                )
+                return console_candidate
             return None
 
         non_mirror_fb = [candidate for candidate in fallback_candidates if not candidate.is_mirror]
@@ -294,6 +302,11 @@ class Plugin:
             f"No app-matched layout found for app_id={app_id}; "
             f"fallback to latest layout {chosen_fb.path}"
         )
+        if console_candidate is not None and console_candidate.source_kind == "workshop":
+            self._log(
+                "[mirror] workshop console candidate exists but scanned fallback was preferred "
+                f"console={console_candidate.path}"
+            )
         return chosen_fb
 
     def _find_recent_loaded_layout_from_console(self, requested_app_id: int) -> TemplateCandidate | None:
