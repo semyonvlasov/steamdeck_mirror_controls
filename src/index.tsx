@@ -18,16 +18,15 @@ type MirrorResult = {
   swapped_tokens?: number;
 };
 
-type CreateMirrorArgs = {
-  app_id: number;
-  mirror_dpad: boolean;
-  mirror_touchpads: boolean;
-  mirror_sticks: boolean;
-};
-
-const createMirrorTemplateCall = callable<[args: CreateMirrorArgs], MirrorResult>(
-  "create_mirror_template"
-);
+const createMirrorTemplateCall = callable<
+  [
+    app_id: number,
+    mirror_dpad: boolean,
+    mirror_touchpads: boolean,
+    mirror_sticks: boolean
+  ],
+  MirrorResult
+>("create_mirror_template");
 
 async function detectCurrentAppId(): Promise<number | undefined> {
   const win = window as any;
@@ -79,12 +78,12 @@ function Content() {
     setStatus("Creating mirror template...");
     try {
       const appId = await detectCurrentAppId();
-      const result = await createMirrorTemplateCall({
-        app_id: appId ?? 0,
-        mirror_dpad: mirrorDpad,
-        mirror_touchpads: mirrorTouchpads,
-        mirror_sticks: mirrorSticks,
-      });
+      const result = await createMirrorTemplateCall(
+        appId ?? 0,
+        mirrorDpad,
+        mirrorTouchpads,
+        mirrorSticks
+      );
       if (!result?.ok) {
         setStatus(result?.error ?? "Failed to create mirror template");
         return;

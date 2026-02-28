@@ -3,7 +3,7 @@ import re
 import secrets
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 try:
     import decky  # type: ignore
@@ -27,18 +27,26 @@ class Plugin:
         self.logger = getattr(decky, "logger", None)
 
     async def _main(self) -> None:
-        self._log("SteamDeck Mirror Controls backend started")
+        self._log("Mirror Controls backend started")
 
     async def _unload(self) -> None:
-        self._log("SteamDeck Mirror Controls backend unloaded")
+        self._log("Mirror Controls backend unloaded")
 
     async def create_mirror_template(
         self,
-        app_id: int = 0,
+        app_id: int | dict[str, Any] = 0,
         mirror_dpad: bool = True,
         mirror_touchpads: bool = True,
         mirror_sticks: bool = False,
     ) -> dict:
+        # Compatibility: handle both positional args and dict payload calls.
+        if isinstance(app_id, dict):
+            payload = app_id
+            app_id = int(payload.get("app_id", 0) or 0)
+            mirror_dpad = bool(payload.get("mirror_dpad", mirror_dpad))
+            mirror_touchpads = bool(payload.get("mirror_touchpads", mirror_touchpads))
+            mirror_sticks = bool(payload.get("mirror_sticks", mirror_sticks))
+
         if not mirror_dpad and not mirror_touchpads and not mirror_sticks:
             return {
                 "ok": False,
