@@ -1,6 +1,8 @@
 import asyncio
+import os
 import re
 import secrets
+import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
@@ -52,14 +54,27 @@ class Plugin:
                 "ok": False,
                 "error": "Nothing selected to mirror. Enable at least one option.",
             }
-
-        return await asyncio.to_thread(
-            self._create_mirror_template_sync,
-            int(app_id),
-            bool(mirror_dpad),
-            bool(mirror_touchpads),
-            bool(mirror_sticks),
-        )
+        try:
+            self._log(
+                "create_mirror_template called "
+                f"app_id={app_id} dpad={mirror_dpad} touchpads={mirror_touchpads} sticks={mirror_sticks}"
+            )
+            return await asyncio.to_thread(
+                self._create_mirror_template_sync,
+                int(app_id),
+                bool(mirror_dpad),
+                bool(mirror_touchpads),
+                bool(mirror_sticks),
+            )
+        except Exception as exc:
+            self._log(
+                "create_mirror_template failed:\n"
+                f"{traceback.format_exc()}"
+            )
+            return {
+                "ok": False,
+                "error": f"Python exception: {type(exc).__name__}: {exc}",
+            }
 
     def _create_mirror_template_sync(
         self,
@@ -122,14 +137,18 @@ class Plugin:
     def _collect_candidates_for_app_dir(self, app_dir: Path) -> list[TemplateCandidate]:
         app_id = int(app_dir.name)
         out: list[TemplateCandidate] = []
-        for file_path in app_dir.rglob("*.vdf"):
-            if not file_path.is_file():
-                continue
-            try:
-                mtime = file_path.stat().st_mtime
-            except OSError:
-                continue
-            out.append(TemplateCandidate(app_id=app_id, path=file_path, mtime=mtime))
+        for root, _, files in os.walk(app_dir, topdown=True, followlinks=False, onerror=lambda _: None):
+            for filename in files:
+                if not filename.lower().endswith(".vdf"):
+                    continue
+                file_path = Path(root) / filename
+                if not file_path.is_file():
+                    continue
+                try:
+                    mtime = file_path.stat().st_mtime
+                except OSError:
+                    continue
+                out.append(TemplateCandidate(app_id=app_id, path=file_path, mtime=mtime))
         return out
 
     def _controller_config_roots(self) -> Iterable[Path]:
