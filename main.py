@@ -122,6 +122,15 @@ class Plugin:
                 ),
             }
 
+        target_app_id = app_id
+        if source.app_id > 0 and source.app_id != app_id:
+            target_app_id = source.app_id
+            self._log(
+                "[mirror] requested app_id does not match selected source; "
+                f"requested={app_id} selected={source.app_id}. "
+                f"Using selected app_id for output target."
+            )
+
         self._log(
             "[mirror] source selected "
             f"kind={source.source_kind} inferred_app_id={source.app_id} "
@@ -138,7 +147,7 @@ class Plugin:
         mirrored = self._append_title_suffix(mirrored)
         self._log(f"[mirror] transformed chars={len(mirrored)} swaps={swaps}")
 
-        output_dir = self._resolve_output_dir(source, app_id)
+        output_dir = self._resolve_output_dir(source, target_app_id)
         self._log(f"[mirror] output_dir={output_dir} {self._path_state(output_dir)}")
         output_path = self._build_output_path(
             output_dir=output_dir,
@@ -159,7 +168,8 @@ class Plugin:
         )
         return {
             "ok": True,
-            "app_id": app_id,
+            "app_id": target_app_id,
+            "requested_app_id": app_id,
             "source_path": str(source.path),
             "output_path": str(output_path),
             "swapped_tokens": swaps,
@@ -220,13 +230,26 @@ class Plugin:
             return None
 
         non_mirror_fb = [candidate for candidate in fallback_candidates if not candidate.is_mirror]
+        app_specific_fb = [candidate for candidate in non_mirror_fb if candidate.app_id > 0]
+        app_specific_non_template_fb = [
+            candidate
+            for candidate in app_specific_fb
+            if not candidate.is_template_like
+        ]
         controller_neptune_fb = [
             candidate
             for candidate in non_mirror_fb
             if candidate.path.name.lower() == "controller_neptune.vdf"
         ]
         non_template_fb = [candidate for candidate in non_mirror_fb if not candidate.is_template_like]
-        source_pool_fb = controller_neptune_fb or non_template_fb or non_mirror_fb or fallback_candidates
+        source_pool_fb = (
+            app_specific_non_template_fb
+            or app_specific_fb
+            or controller_neptune_fb
+            or non_template_fb
+            or non_mirror_fb
+            or fallback_candidates
+        )
         self._log_candidate_preview("fallback", source_pool_fb)
         chosen_fb = max(source_pool_fb, key=lambda candidate: candidate.mtime)
         self._log(
