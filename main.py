@@ -874,6 +874,14 @@ class Plugin:
             )
             total_swaps += swaps
 
+        any_directional = mirror_dpad or mirror_touchpads or mirror_sticks or mirror_gyro_buttons
+        if any_directional:
+            tb_pairs = self._trigger_bumper_pairs()
+            transformed, swaps = self._swap_source_binding_pairs(transformed, tb_pairs)
+            total_swaps += swaps
+            transformed, swaps = self._swap_quoted_key_pairs(transformed, tb_pairs)
+            total_swaps += swaps
+
         if mirror_menu_position:
             transformed, swaps = self._mirror_touch_menu_position_x(transformed)
             total_swaps += swaps
@@ -888,10 +896,12 @@ class Plugin:
             total_swaps += swaps
 
             # Some layouts store gyro activation as token text in gyro-related settings.
+            # Use ALL left/right pairs since gyro can be activated by any input.
+            all_activation_pairs = self._all_gyro_activation_pairs()
             transformed, swaps = self._swap_value_tokens_for_key_patterns(
                 transformed,
                 key_patterns=("gyro", "mode_shift", "modeshift"),
-                pairs=gyro_pairs,
+                pairs=all_activation_pairs,
             )
             total_swaps += swaps
 
@@ -1119,6 +1129,33 @@ class Plugin:
             ("l5", "r5"),
         ]
 
+    def _trigger_bumper_pairs(self) -> list[tuple[str, str]]:
+        return [
+            ("left_trigger", "right_trigger"),
+            ("left_bumper", "right_bumper"),
+        ]
+
+    def _all_gyro_activation_pairs(self) -> list[tuple[str, str]]:
+        return [
+            ("left_trigger", "right_trigger"),
+            ("left_bumper", "right_bumper"),
+            ("left_trackpad", "right_trackpad"),
+            ("left_touchpad", "right_touchpad"),
+            ("left_pad", "right_pad"),
+            ("left_stick", "right_stick"),
+            ("left_joystick", "right_joystick"),
+            ("joystick_left", "joystick_right"),
+            ("stick_left", "stick_right"),
+            ("button_back_left", "button_back_right"),
+            ("button_back_left_upper", "button_back_right_upper"),
+            ("back_left", "back_right"),
+            ("back_left_upper", "back_right_upper"),
+            ("button_l4", "button_r4"),
+            ("button_l5", "button_r5"),
+            ("l4", "r4"),
+            ("l5", "r5"),
+        ]
+
     def _token_hits(self, text: str, token: str) -> int:
         token_boundary = r"[A-Za-z0-9_]"
         pattern = re.compile(
@@ -1165,36 +1202,6 @@ class Plugin:
             decimals = max(len(value.split(".", 1)[1]), 1)
             return f"{mirrored:.{decimals}f}"
         return str(int(round(mirrored)))
-
-    def _mirror_gyro_button_tokens(self, text: str) -> tuple[str, int]:
-        lines = text.splitlines(keepends=True)
-        total_replacements = 0
-        out_lines: list[str] = []
-        gyro_pairs = [
-            ("left_trigger", "right_trigger"),
-            ("left_bumper", "right_bumper"),
-            ("left_trackpad", "right_trackpad"),
-            ("left_touchpad", "right_touchpad"),
-            ("left_pad", "right_pad"),
-            ("left_stick", "right_stick"),
-            ("left_joystick", "right_joystick"),
-            ("joystick_left", "joystick_right"),
-            ("stick_left", "stick_right"),
-            ("button_back_left", "button_back_right"),
-            ("back_left", "back_right"),
-            ("button_l4", "button_r4"),
-            ("l4", "r4"),
-        ]
-
-        for line in lines:
-            if "gyro" not in line.lower():
-                out_lines.append(line)
-                continue
-            transformed_line, replacements = self._swap_token_pairs(line, gyro_pairs)
-            total_replacements += replacements
-            out_lines.append(transformed_line)
-
-        return "".join(out_lines), total_replacements
 
     def _expand_case_pairs(self, pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
         out: list[tuple[str, str]] = []
