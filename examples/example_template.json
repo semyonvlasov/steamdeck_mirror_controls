@@ -1,0 +1,143 @@
+{
+  "controller_mappings": {
+    "version": "1",
+    "title": "Example Steam Deck Layout",
+    "description": "Sample controller configuration",
+    "creator": "76561198012345678",
+    "progenitor": "",
+    "url": "",
+    "export_type": "",
+    "controller_type": "controller_steamcontroller_gordon",
+    "controller_caps": 2088894,
+    "major_revision": 0,
+    "minor_revision": 0,
+    "Timestamp": "1234567890",
+    "actions": {
+      "Default": {
+        "title": "Default",
+        "legacy_set": true
+      }
+    },
+    "action_layers": {},
+    "settings": {
+      "left_trackpad_mode": "0",
+      "right_trackpad_mode": "1"
+    },
+    "group": {
+      "id": "0",
+      "mode": "four_buttons",
+      "name": "",
+      "description": "",
+      "inputs": {
+        "button_a": {
+          "activators": {
+            "Full_Press": {
+              "bindings": {
+                "binding": "xinput_button A"
+              }
+            }
+          }
+        },
+        "button_b": {
+          "activators": {
+            "Full_Press": {
+              "bindings": {
+                "binding": "xinput_button B"
+              }
+            }
+          }
+        },
+        "button_x": {
+          "activators": {
+            "Full_Press": {
+              "bindings": {
+                "binding": "xinput_button X"
+              }
+            }
+          }
+        },
+        "button_y": {
+          "activators": {
+            "Full_Press": {
+              "bindings": {
+                "binding": "xinput_button Y"
+              }
+            }
+          }
+        },
+        "left_bumper": {
+          "activators": {
+            "Full_Press": {
+              "bindings": {
+                "binding": "xinput_button shoulder_left"
+              }
+            }
+          }
+        },
+        "right_bumper": {
+          "activators": {
+            "Full_Press": {
+              "bindings": {
+                "binding": "xinput_button shoulder_right"
+              }
+            }
+          }
+        },
+        "left_trigger": {
+          "activators": {
+            "Full_Press": {
+              "bindings": {
+                "binding": "xinput_button trigger_left"
+              }
+            }
+          }
+        },
+        "right_trigger": {
+          "activators": {
+            "Full_Press": {
+              "bindings": {
+                "binding": "xinput_button trigger_right"
+              }
+            }
+          }
+        },
+        "dpad_north": {
+          "activators": {
+            "Full_Press": {
+              "bindings": {
+                "binding": "xinput_button dpad_up"
+              }
+            }
+          }
+        },
+        "dpad_south": {
+          "activators": {
+            "Full_Press": {
+              "bindings": {
+                "binding": "xinput_button dpad_down"
+              }
+            }
+          }
+        },
+        "dpad_east": {
+          "activators": {
+            "Full_Press": {
+              "bindings": {
+                "binding": "xinput_button dpad_right"
+              }
+            }
+          }
+        },
+        "dpad_west": {
+          "activators": {
+            "Full_Press": {
+              "bindings": {
+                "binding": "xinput_button dpad_left"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

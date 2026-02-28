@@ -1,0 +1,2 @@
+# No external dependencies required
+# The tool uses only Python standard library modules

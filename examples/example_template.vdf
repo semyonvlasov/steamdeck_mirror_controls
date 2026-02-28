@@ -1,0 +1,108 @@
+"controller_mappings"
+{
+	"version"		"3"
+	"revision"		"92"
+	"title"		"Example VDF Template"
+	"description"		"Sample Valve Data Format controller configuration"
+	"creator"		"76561198012345678"
+	"controller_type"		"controller_steamcontroller_gordon"
+	
+	"actions"
+	{
+		"Default"
+		{
+			"title"		"Default"
+			"legacy_set"		"1"
+		}
+	}
+	
+	"group"
+	{
+		"id"		"0"
+		"mode"		"four_buttons"
+		"name"		""
+		"description"		""
+		
+		"inputs"
+		{
+			"button_a"
+			{
+				"activators"
+				{
+					"Full_Press"
+					{
+						"bindings"
+						{
+							"binding"		"xinput_button A"
+						}
+					}
+				}
+			}
+			"button_b"
+			{
+				"activators"
+				{
+					"Full_Press"
+					{
+						"bindings"
+						{
+							"binding"		"xinput_button B"
+						}
+					}
+				}
+			}
+			"left_bumper"
+			{
+				"activators"
+				{
+					"Full_Press"
+					{
+						"bindings"
+						{
+							"binding"		"xinput_button shoulder_left"
+						}
+					}
+				}
+			}
+			"right_bumper"
+			{
+				"activators"
+				{
+					"Full_Press"
+					{
+						"bindings"
+						{
+							"binding"		"xinput_button shoulder_right"
+						}
+					}
+				}
+			}
+			"left_trigger"
+			{
+				"activators"
+				{
+					"Full_Press"
+					{
+						"bindings"
+						{
+							"binding"		"xinput_button trigger_left"
+						}
+					}
+				}
+			}
+			"right_trigger"
+			{
+				"activators"
+				{
+					"Full_Press"
+					{
+						"bindings"
+						{
+							"binding"		"xinput_button trigger_right"
+						}
+					}
+				}
+			}
+		}
+	}
+}
