@@ -1,6 +1,6 @@
 # SteamDeck Mirror Controls (Decky Plugin)
 
-Decky plugin to create a mirrored Steam Input layout from the current game's active layout and save it to game layouts.
+Decky plugin to create a mirrored Steam Input layout from the current game's active layout and save it to user templates.
 
 ## Features
 
@@ -34,9 +34,9 @@ It also scans Steam Controller Configs current layouts, for example:
 
 `~/.local/share/Steam/steamapps/common/Steam Controller Configs/<steam_user_id>/config/**/controller_neptune.vdf`
 
-The plugin writes mirrored layouts to game layouts directory:
+The plugin writes mirrored layouts to template directories (user-scoped first, then Steam global template dirs):
 
-`<userdata>/<steam_user_id>/config/controller_configs/<app_id>/<source>_mirror_YYYYmmdd_HHMMSS.vdf`
+`<steam_config_root>/templates/<source>_app_<app_id>_mirror_YYYYmmdd_HHMMSS.vdf`
 
 It also appends `(Mirror <timestamp>)` to template title.
 
@@ -50,7 +50,7 @@ It also appends `(Mirror <timestamp>)` to template title.
 ## Notes
 
 - Token-level mirroring is string-based to stay resilient to different VDF structures.
-- Backend does not write into global/common template locations; output is saved in game layouts.
+- Backend now saves output as templates and does not write to game layout folders.
 - If both options are disabled, the plugin returns an error.
 
 ## Install On Steam Deck

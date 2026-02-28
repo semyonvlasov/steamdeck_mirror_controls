@@ -148,12 +148,12 @@ class Plugin:
         mirrored = self._append_title_suffix(mirrored)
         self._log(f"[mirror] transformed chars={len(mirrored)} swaps={swaps}")
 
-        output_dir = self._resolve_output_dir(source, target_app_id)
-        self._log(f"[mirror] output_dir={output_dir} {self._path_state(output_dir)}")
-        output_path = self._build_output_path(
+        output_dir = self._resolve_template_output_dir(source)
+        self._log(f"[mirror] template_output_dir={output_dir} {self._path_state(output_dir)}")
+        output_path = self._build_template_output_path(
             output_dir=output_dir,
             source_path=source.path,
-            source_kind=source.source_kind,
+            app_id=target_app_id,
         )
         self._log(f"[mirror] output_path chosen={output_path}")
         if output_path == source.path:
@@ -162,7 +162,7 @@ class Plugin:
             self._log(f"[mirror] source equals output; backup written to {backup_path}")
         self._write_text_verified(output_path, mirrored)
         self._log(f"[mirror] output_path written {self._path_state(output_path)}")
-        self._log(f"[mirror] output_dir latest_vdf={self._latest_vdf_paths(output_dir, limit=8)}")
+        self._log(f"[mirror] template_output_dir latest_vdf={self._latest_vdf_paths(output_dir, limit=8)}")
 
         self._log(
             f"Created mirror template app_id={app_id} source={source.path} output={output_path}"
@@ -584,27 +584,87 @@ class Plugin:
         except OSError:
             return []
 
-    def _resolve_output_dir(self, source: TemplateCandidate, app_id: int) -> Path:
-        if source.source_kind == "steam_controller_configs":
-            app_dir = source.controller_root / str(app_id)
-            if app_dir.is_dir():
-                return app_dir
-            try:
-                app_dir.mkdir(parents=True, exist_ok=True)
-                return app_dir
-            except OSError:
-                return source.path.parent
+    def _resolve_template_output_dir(self, source: TemplateCandidate) -> Path:
+        candidates = self._template_output_dir_candidates(source)
+        self._log(
+            "[mirror] template_dir_candidates="
+            + "[" + ", ".join(str(path) for path in candidates) + "]"
+        )
 
-        controller_root = source.controller_root
-        fallback_dir = source.path.parent
-        app_dir = controller_root / str(app_id)
-        if app_dir.is_dir():
-            return app_dir
-        try:
-            app_dir.mkdir(parents=True, exist_ok=True)
-            return app_dir
-        except OSError:
-            return fallback_dir
+        for path in candidates:
+            if path.is_dir():
+                return path
+
+        for path in candidates:
+            try:
+                path.mkdir(parents=True, exist_ok=True)
+                return path
+            except OSError:
+                continue
+
+        # Absolute fallback: avoid hard failure, but still keep file out of game layout folders.
+        fallback = source.path.parent / "templates"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+    def _template_output_dir_candidates(self, source: TemplateCandidate) -> list[Path]:
+        out: list[Path] = []
+
+        # Prefer user-specific template directories near discovered config roots.
+        if source.source_kind == "steam_controller_configs":
+            out.extend(
+                [
+                    source.controller_root / "templates",
+                    source.controller_root / "user_templates",
+                ]
+            )
+        elif source.source_kind == "userdata":
+            out.extend(
+                [
+                    source.controller_root / "templates",
+                    source.controller_root / "user_templates",
+                ]
+            )
+
+        # Global Steam template locations (Linux + Flatpak).
+        for home in self._steam_home_candidates():
+            out.extend(
+                [
+                    home / ".local" / "share" / "Steam" / "controller_base" / "templates",
+                    home / ".local" / "share" / "Steam" / "controller_base" / "template",
+                    home / ".steam" / "steam" / "controller_base" / "templates",
+                    home / ".steam" / "steam" / "controller_base" / "template",
+                    home / ".steam" / "root" / "controller_base" / "templates",
+                    home / ".steam" / "root" / "controller_base" / "template",
+                    home
+                    / ".var"
+                    / "app"
+                    / "com.valvesoftware.Steam"
+                    / ".local"
+                    / "share"
+                    / "Steam"
+                    / "controller_base"
+                    / "templates",
+                    home
+                    / ".var"
+                    / "app"
+                    / "com.valvesoftware.Steam"
+                    / ".local"
+                    / "share"
+                    / "Steam"
+                    / "controller_base"
+                    / "template",
+                ]
+            )
+
+        seen: set[Path] = set()
+        deduped: list[Path] = []
+        for path in out:
+            if path in seen:
+                continue
+            seen.add(path)
+            deduped.append(path)
+        return deduped
 
     def _write_text_verified(self, output_path: Path, content: str) -> None:
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -648,18 +708,14 @@ class Plugin:
                 f"mtime={mtime} path={candidate.path}"
             )
 
-    def _build_output_path(self, output_dir: Path, source_path: Path, source_kind: str) -> Path:
-        if source_kind == "steam_controller_configs":
-            # Steam reliably picks up per-game layouts here when using canonical file names.
-            return output_dir / source_path.name
-
+    def _build_template_output_path(self, output_dir: Path, source_path: Path, app_id: int) -> Path:
         now = datetime.now().strftime("%Y%m%d_%H%M%S")
         stem = source_path.stem
         suffix = source_path.suffix or ".vdf"
-        candidate = output_dir / f"{stem}_mirror_{now}{suffix}"
+        candidate = output_dir / f"{stem}_app_{app_id}_mirror_{now}{suffix}"
         index = 1
         while candidate.exists():
-            candidate = output_dir / f"{stem}_mirror_{now}_{index}{suffix}"
+            candidate = output_dir / f"{stem}_app_{app_id}_mirror_{now}_{index}{suffix}"
             index += 1
         return candidate
 
