@@ -1,0 +1,10 @@
+{
+  "name": "SteamDeck Mirror Controls",
+  "author": "semenvlasov",
+  "api_version": 1,
+  "flags": [],
+  "publish": {
+    "description": "Create mirrored Steam Input templates from the current game's active template.",
+    "tags": ["controller", "steam-input", "utility"]
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "steamdeck-mirror-controls",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "rollup -c",
+    "watch": "rollup -c -w"
+  },
+  "devDependencies": {
+    "@decky/rollup": "^1.2.0",
+    "@decky/ui": "^2.0.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "rollup": "^4.22.4",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "@decky/api": "^1.1.0",
+    "react-icons": "^4.12.0"
+  },
+  "pnpm": {
+    "peerDependencyRules": {
+      "ignoreMissing": [
+        "react",
+        "react-dom"
+      ]
+    }
+  }
+}
