@@ -152,9 +152,9 @@ class Plugin:
         mirrored = self._append_title_suffix(mirrored)
         self._log(f"[mirror] transformed chars={len(mirrored)} swaps={swaps}")
 
-        output_dir = self._resolve_template_output_dir(source)
-        self._log(f"[mirror] template_output_dir={output_dir} {self._path_state(output_dir)}")
-        output_path = self._build_template_output_path(
+        output_dir = self._resolve_game_layout_output_dir(source, target_app_id)
+        self._log(f"[mirror] output_dir={output_dir} {self._path_state(output_dir)}")
+        output_path = self._build_game_output_path(
             output_dir=output_dir,
             source_path=source.path,
             app_id=target_app_id,
@@ -166,7 +166,7 @@ class Plugin:
             self._log(f"[mirror] source equals output; backup written to {backup_path}")
         self._write_text_verified(output_path, mirrored)
         self._log(f"[mirror] output_path written {self._path_state(output_path)}")
-        self._log(f"[mirror] template_output_dir latest_vdf={self._latest_vdf_paths(output_dir, limit=8)}")
+        self._log(f"[mirror] output_dir latest_vdf={self._latest_vdf_paths(output_dir, limit=8)}")
 
         self._log(
             f"Created mirror template app_id={app_id} source={source.path} output={output_path}"
@@ -607,10 +607,10 @@ class Plugin:
         except OSError:
             return []
 
-    def _resolve_template_output_dir(self, source: TemplateCandidate) -> Path:
-        candidates = self._template_output_dir_candidates(source)
+    def _resolve_game_layout_output_dir(self, source: TemplateCandidate, app_id: int) -> Path:
+        candidates = self._game_layout_output_dir_candidates(source, app_id)
         self._log(
-            "[mirror] template_dir_candidates="
+            "[mirror] output_dir_candidates="
             + "[" + ", ".join(str(path) for path in candidates) + "]"
         )
 
@@ -625,93 +625,22 @@ class Plugin:
             except OSError:
                 continue
 
-        # Absolute fallback: avoid hard failure, but still keep file out of game layout folders.
-        fallback = source.path.parent / "templates"
+        fallback = source.path.parent
         fallback.mkdir(parents=True, exist_ok=True)
         return fallback
 
-    def _template_output_dir_candidates(self, source: TemplateCandidate) -> list[Path]:
+    def _game_layout_output_dir_candidates(self, source: TemplateCandidate, app_id: int) -> list[Path]:
         out: list[Path] = []
 
-        # Prefer user-specific template directories near discovered config roots.
+        # Primary target: Steam Controller Configs game layout directory.
         for config_root in self._steam_controller_configs_roots():
-            out.extend(
-                [
-                    config_root / "templates",
-                    config_root / "template",
-                    config_root / "user_templates",
-                    config_root.parent / "templates",
-                    config_root.parent / "template",
-                    config_root.parent / "user_templates",
-                ]
-            )
+            out.append(config_root / str(app_id))
 
-        for controller_root in self._controller_config_roots():
-            out.extend(
-                [
-                    controller_root / "templates",
-                    controller_root / "template",
-                    controller_root / "user_templates",
-                ]
-            )
-
-        if source.source_kind == "steam_controller_configs":
-            out.extend(
-                [
-                    source.controller_root / "templates",
-                    source.controller_root / "template",
-                    source.controller_root / "user_templates",
-                    source.controller_root.parent / "templates",
-                    source.controller_root.parent / "template",
-                    source.controller_root.parent / "user_templates",
-                ]
-            )
-        elif source.source_kind == "userdata":
-            out.extend(
-                [
-                    source.controller_root / "templates",
-                    source.controller_root / "template",
-                    source.controller_root / "user_templates",
-                ]
-            )
-        elif source.source_kind == "workshop":
-            out.extend(
-                [
-                    source.path.parent / "templates",
-                    source.path.parent / "template",
-                ]
-            )
-
-        # Global Steam template locations (Linux + Flatpak).
-        for home in self._steam_home_candidates():
-            out.extend(
-                [
-                    home / ".local" / "share" / "Steam" / "controller_base" / "templates",
-                    home / ".local" / "share" / "Steam" / "controller_base" / "template",
-                    home / ".steam" / "steam" / "controller_base" / "templates",
-                    home / ".steam" / "steam" / "controller_base" / "template",
-                    home / ".steam" / "root" / "controller_base" / "templates",
-                    home / ".steam" / "root" / "controller_base" / "template",
-                    home
-                    / ".var"
-                    / "app"
-                    / "com.valvesoftware.Steam"
-                    / ".local"
-                    / "share"
-                    / "Steam"
-                    / "controller_base"
-                    / "templates",
-                    home
-                    / ".var"
-                    / "app"
-                    / "com.valvesoftware.Steam"
-                    / ".local"
-                    / "share"
-                    / "Steam"
-                    / "controller_base"
-                    / "template",
-                ]
-            )
+        # Keep near source as next best options.
+        if source.source_kind in ("steam_controller_configs", "userdata"):
+            out.append(source.controller_root / str(app_id))
+        out.append(source.path.parent / str(app_id))
+        out.append(source.path.parent)
 
         seen: set[Path] = set()
         deduped: list[Path] = []
@@ -764,7 +693,7 @@ class Plugin:
                 f"mtime={mtime} path={candidate.path}"
             )
 
-    def _build_template_output_path(self, output_dir: Path, source_path: Path, app_id: int) -> Path:
+    def _build_game_output_path(self, output_dir: Path, source_path: Path, app_id: int) -> Path:
         now = datetime.now().strftime("%Y%m%d_%H%M%S")
         stem = source_path.stem
         suffix = source_path.suffix or ".vdf"
