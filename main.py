@@ -1,9 +1,6 @@
-from __future__ import annotations
-
 import asyncio
 import re
 import secrets
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
@@ -14,11 +11,11 @@ except ImportError:  # pragma: no cover
     decky = None
 
 
-@dataclass
 class TemplateCandidate:
-    app_id: int
-    path: Path
-    mtime: float
+    def __init__(self, app_id: int, path: Path, mtime: float) -> None:
+        self.app_id = app_id
+        self.path = path
+        self.mtime = mtime
 
     @property
     def is_mirror(self) -> bool:
