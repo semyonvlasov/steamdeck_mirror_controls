@@ -865,7 +865,9 @@ class Plugin:
     def _swap_group_source_binding_line(
         self, line: str, pairs: list[tuple[str, str]]
     ) -> tuple[str, int]:
-        match = re.match(r'^(\s*"[^"]+"\s*")([^"]*)(".*)$', line)
+        has_newline = line.endswith("\n")
+        body = line[:-1] if has_newline else line
+        match = re.match(r'^(\s*"[^"]+"\s*")([^"]*)(".*)$', body)
         if not match:
             return line, 0
 
@@ -882,7 +884,10 @@ class Plugin:
             return line, 0
 
         swapped_value = f"{leading_ws}{swapped_token}{trailing}"
-        return f"{match.group(1)}{swapped_value}{match.group(3)}", 1
+        rebuilt = f"{match.group(1)}{swapped_value}{match.group(3)}"
+        if has_newline:
+            rebuilt += "\n"
+        return rebuilt, 1
 
     def _swap_literal_pair(self, text: str, left: str, right: str) -> tuple[str, int]:
         marker_left = f"__mirror_lit_left_{secrets.token_hex(6)}__"
