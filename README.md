@@ -58,6 +58,28 @@ It also appends `(Mirror <timestamp>)` to template title.
    - `dist/index.js`
 5. Reload Decky plugins (or restart Steam Deck).
 
+## Install Via Decky Manual Install URL
+
+Use this URL in Decky `Developer -> Manual Plugin Install`:
+
+`https://github.com/semyonvlasov/steamdeck_mirror_controls/releases/latest/download/steamdeck_mirror_controls.zip`
+
+How to publish a new zip:
+
+1. Commit and push changes to `main`.
+2. Create and push a tag (example):
+   - `git tag v0.1.0`
+   - `git push origin v0.1.0`
+3. GitHub Actions workflow `Build And Release Plugin Zip` will:
+   - build frontend
+   - create `steamdeck_mirror_controls.zip`
+   - attach zip to the GitHub Release for the tag
+
+Notes:
+
+- Workflow artifacts are temporary and not ideal for Decky install links.
+- Release assets are public and stable for manual install.
+
 ### Example copy from your dev machine
 
 ```bash

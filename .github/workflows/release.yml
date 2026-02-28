@@ -1,0 +1,57 @@
+name: Build And Release Plugin Zip
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install Dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build Frontend
+        run: pnpm run build
+
+      - name: Prepare Zip Payload
+        run: |
+          set -euxo pipefail
+          rm -rf package
+          mkdir -p package/steamdeck_mirror_controls
+          cp main.py package/steamdeck_mirror_controls/main.py
+          cp plugin.json package/steamdeck_mirror_controls/plugin.json
+          cp -R dist package/steamdeck_mirror_controls/dist
+          cp README.md package/steamdeck_mirror_controls/README.md
+          cd package
+          zip -r ../steamdeck_mirror_controls.zip steamdeck_mirror_controls
+
+      - name: Upload Workflow Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: steamdeck_mirror_controls
+          path: steamdeck_mirror_controls.zip
+
+      - name: Attach Zip To GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: steamdeck_mirror_controls.zip
