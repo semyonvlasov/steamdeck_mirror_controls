@@ -853,7 +853,7 @@ class Plugin:
             total_swaps += swaps
 
         if mirror_touchpads:
-            transformed, swaps = self._swap_token_pairs(
+            transformed, swaps = self._swap_source_binding_pairs(
                 transformed,
                 [
                     ("left_trackpad", "right_trackpad"),
@@ -867,7 +867,7 @@ class Plugin:
 
         if mirror_sticks:
             stick_pairs = self._stick_pairs_for_text(transformed)
-            transformed, swaps = self._swap_token_pairs(
+            transformed, swaps = self._swap_source_binding_pairs(
                 transformed,
                 stick_pairs,
             )
@@ -878,7 +878,20 @@ class Plugin:
             total_swaps += swaps
 
         if mirror_gyro_buttons:
-            transformed, swaps = self._mirror_gyro_button_tokens(transformed)
+            gyro_pairs = self._gyro_control_pairs()
+            transformed, swaps = self._swap_source_binding_pairs(transformed, gyro_pairs)
+            total_swaps += swaps
+
+            # Swap physical side button keys in switch/inputs blocks without touching action payloads.
+            transformed, swaps = self._swap_quoted_key_pairs(transformed, gyro_pairs)
+            total_swaps += swaps
+
+            # Some layouts store gyro activation as token text in gyro-related settings.
+            transformed, swaps = self._swap_value_tokens_for_key_patterns(
+                transformed,
+                key_patterns=("gyro", "mode_shift", "modeshift"),
+                pairs=gyro_pairs,
+            )
             total_swaps += swaps
 
         return transformed, total_swaps
@@ -981,6 +994,75 @@ class Plugin:
             rebuilt += "\n"
         return rebuilt, 1
 
+    def _swap_quoted_key_pairs(
+        self,
+        text: str,
+        pairs: list[tuple[str, str]],
+    ) -> tuple[str, int]:
+        lines = text.splitlines(keepends=True)
+        out_lines: list[str] = []
+        total_replacements = 0
+
+        for line in lines:
+            has_newline = line.endswith("\n")
+            body = line[:-1] if has_newline else line
+            match = re.match(r'^(\s*")([^"]+)(".*)$', body)
+            if not match:
+                out_lines.append(line)
+                continue
+
+            current_key = match.group(2)
+            swapped_key = self._swap_token_value(current_key, pairs)
+            if swapped_key == current_key:
+                out_lines.append(line)
+                continue
+
+            rebuilt = f'{match.group(1)}{swapped_key}{match.group(3)}'
+            if has_newline:
+                rebuilt += "\n"
+            out_lines.append(rebuilt)
+            total_replacements += 1
+
+        return "".join(out_lines), total_replacements
+
+    def _swap_value_tokens_for_key_patterns(
+        self,
+        text: str,
+        key_patterns: tuple[str, ...],
+        pairs: list[tuple[str, str]],
+    ) -> tuple[str, int]:
+        lowered_patterns = tuple(pattern.lower() for pattern in key_patterns)
+        lines = text.splitlines(keepends=True)
+        out_lines: list[str] = []
+        total_replacements = 0
+
+        for line in lines:
+            has_newline = line.endswith("\n")
+            body = line[:-1] if has_newline else line
+            match = re.match(r'^(\s*"([^"]+)"\s*")([^"]*)(".*)$', body)
+            if not match:
+                out_lines.append(line)
+                continue
+
+            key_name = match.group(2).lower()
+            if lowered_patterns and not any(pattern in key_name for pattern in lowered_patterns):
+                out_lines.append(line)
+                continue
+
+            value = match.group(3)
+            swapped_value, replacements = self._swap_token_pairs(value, pairs)
+            if replacements <= 0:
+                out_lines.append(line)
+                continue
+
+            rebuilt = f"{match.group(1)}{swapped_value}{match.group(4)}"
+            if has_newline:
+                rebuilt += "\n"
+            out_lines.append(rebuilt)
+            total_replacements += replacements
+
+        return "".join(out_lines), total_replacements
+
     def _swap_literal_pair(self, text: str, left: str, right: str) -> tuple[str, int]:
         marker_left = f"__mirror_lit_left_{secrets.token_hex(6)}__"
         marker_right = f"__mirror_lit_right_{secrets.token_hex(6)}__"
@@ -1022,6 +1104,18 @@ class Plugin:
             ("joystick_left", "joystick_right"),
             ("left_analog", "right_analog"),
             ("analog_left", "analog_right"),
+        ]
+
+    def _gyro_control_pairs(self) -> list[tuple[str, str]]:
+        return [
+            ("button_back_left", "button_back_right"),
+            ("button_back_left_upper", "button_back_right_upper"),
+            ("back_left", "back_right"),
+            ("back_left_upper", "back_right_upper"),
+            ("button_l4", "button_r4"),
+            ("button_l5", "button_r5"),
+            ("l4", "r4"),
+            ("l5", "r5"),
         ]
 
     def _token_hits(self, text: str, token: str) -> int:
