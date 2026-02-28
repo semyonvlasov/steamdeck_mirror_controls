@@ -119,17 +119,21 @@ class Plugin:
         mirrored = self._append_title_suffix(mirrored)
 
         output_path = self._build_output_path(
-            output_dir=self._resolve_game_layout_output_dir(source),
+            output_dir=self._resolve_game_layout_output_dir(
+                source.controller_root,
+                app_id,
+                source.path.parent,
+            ),
             source_path=source.path,
         )
         output_path.write_text(mirrored, encoding="utf-8")
 
         self._log(
-            f"Created mirror template app_id={source.app_id} source={source.path} output={output_path}"
+            f"Created mirror template app_id={app_id} source={source.path} output={output_path}"
         )
         return {
             "ok": True,
-            "app_id": source.app_id,
+            "app_id": app_id,
             "source_path": str(source.path),
             "output_path": str(output_path),
             "swapped_tokens": swaps,
@@ -137,68 +141,103 @@ class Plugin:
 
     def _find_current_layout_for_app(self, app_id: int) -> TemplateCandidate | None:
         candidates: list[TemplateCandidate] = []
+        fallback_candidates: list[TemplateCandidate] = []
         for controller_root in self._controller_config_roots():
-            candidates.extend(self._collect_candidates_for_app(controller_root, app_id))
+            all_candidates = self._collect_all_candidates(controller_root)
+            if not all_candidates:
+                continue
+            fallback_candidates.extend(all_candidates)
+            candidates.extend(self._filter_candidates_for_app(all_candidates, app_id))
 
-        if not candidates:
+        if candidates:
+            non_mirror = [candidate for candidate in candidates if not candidate.is_mirror]
+            current_layout_like = [candidate for candidate in non_mirror if candidate.is_current_layout_like]
+            non_template = [candidate for candidate in non_mirror if not candidate.is_template_like]
+            source_pool = current_layout_like or non_template or non_mirror or candidates
+            chosen = max(source_pool, key=lambda candidate: candidate.mtime)
+            self._log(
+                f"Found {len(candidates)} app-matched layouts for app_id={app_id}; selected {chosen.path}"
+            )
+            return chosen
+
+        if not fallback_candidates:
             return None
 
-        non_mirror = [candidate for candidate in candidates if not candidate.is_mirror]
-        current_layout_like = [candidate for candidate in non_mirror if candidate.is_current_layout_like]
-        non_template = [candidate for candidate in non_mirror if not candidate.is_template_like]
-        source_pool = current_layout_like or non_template or non_mirror or candidates
-        return max(source_pool, key=lambda candidate: candidate.mtime)
+        non_mirror_fb = [candidate for candidate in fallback_candidates if not candidate.is_mirror]
+        non_template_fb = [candidate for candidate in non_mirror_fb if not candidate.is_template_like]
+        source_pool_fb = non_template_fb or non_mirror_fb or fallback_candidates
+        chosen_fb = max(source_pool_fb, key=lambda candidate: candidate.mtime)
+        self._log(
+            f"No app-matched layout found for app_id={app_id}; "
+            f"fallback to latest layout {chosen_fb.path}"
+        )
+        return chosen_fb
 
-    def _collect_candidates_for_app(self, controller_root: Path, app_id: int) -> list[TemplateCandidate]:
+    def _collect_all_candidates(self, controller_root: Path) -> list[TemplateCandidate]:
         out: list[TemplateCandidate] = []
-
-        direct_candidates = [
-            controller_root / f"app_{app_id}.vdf",
-            controller_root / f"{app_id}.vdf",
-        ]
-        for file_path in direct_candidates:
-            if file_path.is_file():
+        for root, _, files in os.walk(controller_root, topdown=True, followlinks=False, onerror=lambda _: None):
+            for filename in files:
+                if not filename.lower().endswith(".vdf"):
+                    continue
+                file_path = Path(root) / filename
+                if not file_path.is_file():
+                    continue
                 try:
                     mtime = file_path.stat().st_mtime
                 except OSError:
                     continue
                 out.append(
                     TemplateCandidate(
-                        app_id=app_id,
+                        app_id=self._infer_app_id_from_path(controller_root, file_path),
                         path=file_path,
                         mtime=mtime,
                         controller_root=controller_root,
                     )
                 )
-
-        app_dirs = [
-            controller_root / str(app_id),
-            controller_root / f"app_{app_id}",
-        ]
-        for app_dir in app_dirs:
-            if not app_dir.is_dir():
-                continue
-            for root, _, files in os.walk(app_dir, topdown=True, followlinks=False, onerror=lambda _: None):
-                for filename in files:
-                    if not filename.lower().endswith(".vdf"):
-                        continue
-                    file_path = Path(root) / filename
-                    if not file_path.is_file():
-                        continue
-                    try:
-                        mtime = file_path.stat().st_mtime
-                    except OSError:
-                        continue
-                    out.append(
-                        TemplateCandidate(
-                            app_id=app_id,
-                            path=file_path,
-                            mtime=mtime,
-                            controller_root=controller_root,
-                        )
-                    )
-
         return out
+
+    def _filter_candidates_for_app(
+        self, candidates: list[TemplateCandidate], app_id: int
+    ) -> list[TemplateCandidate]:
+        app_key = str(app_id)
+        app_key_token = f"app_{app_key}"
+        out: list[TemplateCandidate] = []
+        for candidate in candidates:
+            if candidate.app_id == app_id:
+                out.append(candidate)
+                continue
+            try:
+                rel = candidate.path.relative_to(candidate.controller_root).as_posix().lower()
+            except ValueError:
+                rel = str(candidate.path).lower()
+            name = candidate.path.name.lower()
+            if (
+                f"/{app_key}/" in f"/{rel}/"
+                or app_key_token in rel
+                or app_key_token in name
+                or name == f"{app_key}.vdf"
+            ):
+                out.append(candidate)
+        return out
+
+    def _infer_app_id_from_path(self, controller_root: Path, file_path: Path) -> int:
+        name = file_path.stem.lower()
+        for pattern in (r"^app_(\d+)$", r"^(\d+)$"):
+            match = re.match(pattern, name)
+            if match:
+                return int(match.group(1))
+
+        try:
+            parts = list(file_path.relative_to(controller_root).parts)
+        except ValueError:
+            parts = list(file_path.parts)
+        for part in reversed(parts):
+            lower = part.lower()
+            if lower.isdigit():
+                return int(lower)
+            if lower.startswith("app_") and lower[4:].isdigit():
+                return int(lower[4:])
+        return 0
 
     def _controller_config_roots(self) -> Iterable[Path]:
         homes = self._steam_home_candidates()
@@ -248,15 +287,17 @@ class Plugin:
         except OSError:
             return []
 
-    def _resolve_game_layout_output_dir(self, source: TemplateCandidate) -> Path:
-        app_dir = source.controller_root / str(source.app_id)
+    def _resolve_game_layout_output_dir(
+        self, controller_root: Path, app_id: int, fallback_dir: Path
+    ) -> Path:
+        app_dir = controller_root / str(app_id)
         if app_dir.is_dir():
             return app_dir
         try:
             app_dir.mkdir(parents=True, exist_ok=True)
             return app_dir
         except OSError:
-            return source.path.parent
+            return fallback_dir
 
     def _build_output_path(self, output_dir: Path, source_path: Path) -> Path:
         now = datetime.now().strftime("%Y%m%d_%H%M%S")
