@@ -257,7 +257,11 @@ class Plugin:
             )
             return chosen
 
-        if console_candidate is not None and console_candidate.source_kind != "workshop":
+        if (
+            console_candidate is not None
+            and console_candidate.source_kind != "workshop"
+            and console_candidate.app_id == app_id
+        ):
             self._log(
                 "[mirror] selected from console log (non-workshop) "
                 f"app_id={console_candidate.app_id} kind={console_candidate.source_kind} "
@@ -266,7 +270,7 @@ class Plugin:
             return console_candidate
 
         if not fallback_candidates:
-            if console_candidate is not None:
+            if console_candidate is not None and console_candidate.app_id == app_id:
                 self._log(
                     "[mirror] no scanned candidates; selected from console log "
                     f"app_id={console_candidate.app_id} kind={console_candidate.source_kind} "
@@ -276,26 +280,27 @@ class Plugin:
             return None
 
         non_mirror_fb = [candidate for candidate in fallback_candidates if not candidate.is_mirror]
-        app_specific_fb = [candidate for candidate in non_mirror_fb if candidate.app_id > 0]
-        app_specific_non_template_fb = [
+        app_specific_requested_fb = [candidate for candidate in non_mirror_fb if candidate.app_id == app_id]
+        app_specific_requested_non_template_fb = [
             candidate
-            for candidate in app_specific_fb
+            for candidate in app_specific_requested_fb
             if not candidate.is_template_like
         ]
-        controller_neptune_fb = [
+        controller_neptune_desktop_fb = [
             candidate
             for candidate in non_mirror_fb
-            if candidate.path.name.lower() == "controller_neptune.vdf"
+            if candidate.app_id == 0 and candidate.path.name.lower() == "controller_neptune.vdf"
         ]
-        non_template_fb = [candidate for candidate in non_mirror_fb if not candidate.is_template_like]
         source_pool_fb = (
-            app_specific_non_template_fb
-            or app_specific_fb
-            or controller_neptune_fb
-            or non_template_fb
-            or non_mirror_fb
-            or fallback_candidates
+            app_specific_requested_non_template_fb
+            or app_specific_requested_fb
+            or controller_neptune_desktop_fb
         )
+        if not source_pool_fb:
+            self._log(
+                f"No app-specific fallback candidate for app_id={app_id}; refusing cross-app fallback"
+            )
+            return None
         self._log_candidate_preview("fallback", source_pool_fb)
         chosen_fb = max(source_pool_fb, key=lambda candidate: candidate.mtime)
         self._log(
@@ -365,15 +370,11 @@ class Plugin:
             if candidate.app_id == requested_app_id:
                 return candidate
 
-        for candidate in prioritized:
-            if candidate.app_id > 0:
-                self._log(
-                    "[mirror] console fallback app_id mismatch "
-                    f"requested={requested_app_id} selected={candidate.app_id}"
-                )
-                return candidate
-
-        return prioritized[0]
+        self._log(
+            "[mirror] console had no same-app candidate; "
+            f"requested={requested_app_id}. Ignoring console fallback to avoid cross-app selection."
+        )
+        return None
 
     def _steam_console_log_paths(self) -> Iterable[Path]:
         homes = self._steam_home_candidates()
