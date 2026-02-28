@@ -111,15 +111,13 @@ class SteamDeckControlMirror:
     
     def _swap_left_right(self, obj):
         """Recursively swap left/right references in a dictionary or list."""
+        import re
+        
         if isinstance(obj, dict):
             new_dict = {}
             for key, value in obj.items():
-                # Swap left/right in keys
-                new_key = key
-                if "left" in key.lower():
-                    new_key = key.lower().replace("left", "right")
-                elif "right" in key.lower():
-                    new_key = key.lower().replace("right", "left")
+                # Swap left/right in keys using word boundaries to avoid partial matches
+                new_key = self._swap_left_right_in_string(key)
                 
                 # Recursively process values
                 new_dict[new_key] = self._swap_left_right(value)
@@ -127,17 +125,58 @@ class SteamDeckControlMirror:
         elif isinstance(obj, list):
             return [self._swap_left_right(item) for item in obj]
         elif isinstance(obj, str):
-            # Swap left/right in string values
-            result = obj
-            if "left" in obj.lower():
-                result = obj.lower().replace("left", "RIGHT_TEMP")
-                result = result.replace("RIGHT_TEMP", "right")
-            elif "right" in obj.lower():
-                result = obj.lower().replace("right", "LEFT_TEMP")
-                result = result.replace("LEFT_TEMP", "left")
-            return result
+            return self._swap_left_right_in_string(obj)
         else:
             return obj
+    
+    def _swap_left_right_in_string(self, text: str) -> str:
+        """
+        Swap left/right in a string while preserving case.
+        Uses word boundaries to avoid partial matches (e.g., won't change "leftover").
+        Handles snake_case, camelCase, PascalCase, and UPPER_CASE.
+        """
+        import re
+        
+        def swap_match(match):
+            """Swap left<->right while preserving original case."""
+            original = match.group(1)  # Get the captured group
+            lower = original.lower()
+            
+            if 'left' in lower:
+                # Determine the case pattern of 'left'
+                if original.isupper():
+                    replacement = 'RIGHT'
+                elif original[0].isupper():
+                    replacement = 'Right'
+                else:
+                    replacement = 'right'
+            else:  # 'right' in lower
+                # Determine the case pattern of 'right'
+                if original.isupper():
+                    replacement = 'LEFT'
+                elif original[0].isupper():
+                    replacement = 'Left'
+                else:
+                    replacement = 'left'
+            
+            return replacement
+        
+        # Pattern: match left/right when:
+        # - At start of string, after non-letter, or before uppercase (for camelCase): (?:^|(?<=[^a-zA-Z])|(?<=[a-z])(?=[A-Z]))
+        # - The word itself: (left|right|Left|Right|LEFT|RIGHT)
+        # - At end of string, before non-letter, or before uppercase: (?=[^a-zA-Z]|$|(?<=[a-z])(?=[A-Z]))
+        
+        # Simpler approach: match the word and check context
+        # For camelCase/PascalCase, we need to handle uppercase before the word too
+        pattern = r'(?:^|(?<=[^a-zA-Z]))(left|right|Left|Right|LEFT|RIGHT)(?=[^a-zA-Z]|$)'
+        result = re.sub(pattern, swap_match, text)
+        
+        # Also handle camelCase: leftBumper -> rightBumper
+        # Match Left/Right at start followed by uppercase
+        camel_pattern = r'(left|right|Left|Right)(?=[A-Z])'
+        result = re.sub(camel_pattern, swap_match, result)
+        
+        return result
     
     def mirror_all_templates(self, reverse: bool = False) -> int:
         """
