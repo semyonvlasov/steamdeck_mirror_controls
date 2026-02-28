@@ -138,6 +138,7 @@ class Plugin:
         )
         original = source.path.read_text(encoding="utf-8", errors="ignore")
         self._log(f"[mirror] source bytes={len(original.encode('utf-8', errors='ignore'))} chars={len(original)}")
+        self._log_source_layout_metadata(original)
         mirrored, swaps = self._build_mirrored_template(
             original,
             mirror_dpad=mirror_dpad,
@@ -176,6 +177,15 @@ class Plugin:
         }
 
     def _find_current_layout_for_app(self, app_id: int) -> TemplateCandidate | None:
+        console_candidate = self._find_recent_loaded_layout_from_console(app_id)
+        if console_candidate is not None:
+            self._log(
+                "[mirror] selected from console log "
+                f"app_id={console_candidate.app_id} kind={console_candidate.source_kind} "
+                f"path={console_candidate.path}"
+            )
+            return console_candidate
+
         candidates: list[TemplateCandidate] = []
         fallback_candidates: list[TemplateCandidate] = []
         userdata_roots = list(self._controller_config_roots())
@@ -257,6 +267,175 @@ class Plugin:
             f"fallback to latest layout {chosen_fb.path}"
         )
         return chosen_fb
+
+    def _find_recent_loaded_layout_from_console(self, requested_app_id: int) -> TemplateCandidate | None:
+        candidates: list[TemplateCandidate] = []
+        seen_paths: set[Path] = set()
+
+        for log_path in self._steam_console_log_paths():
+            tail = self._read_text_tail(log_path, max_bytes=2 * 1024 * 1024)
+            if not tail:
+                continue
+            for line in reversed(tail.splitlines()):
+                parsed = self._parse_console_loaded_config_line(line)
+                if parsed is None:
+                    continue
+                app_id, config_path, ts = parsed
+                if config_path in seen_paths or not config_path.is_file():
+                    continue
+                source_kind, controller_root = self._infer_source_from_path(config_path)
+                inferred_app_id = app_id if app_id > 0 else self._infer_app_id_from_path(controller_root, config_path)
+                mtime = ts if ts > 0 else self._safe_mtime(config_path)
+                candidates.append(
+                    TemplateCandidate(
+                        app_id=inferred_app_id,
+                        path=config_path,
+                        mtime=mtime,
+                        controller_root=controller_root,
+                        source_kind=source_kind,
+                    )
+                )
+                seen_paths.add(config_path)
+                if len(candidates) >= 16:
+                    break
+            if len(candidates) >= 16:
+                break
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda candidate: candidate.mtime, reverse=True)
+        fresh_candidates = [candidate for candidate in candidates if self._is_recent(candidate.mtime, max_hours=12)]
+        if not fresh_candidates:
+            self._log("[mirror] console candidates found but none are recent enough; ignoring console source")
+            return None
+
+        self._log_candidate_preview("console", fresh_candidates, limit=6)
+
+        for candidate in fresh_candidates:
+            if candidate.app_id == requested_app_id:
+                return candidate
+
+        for candidate in fresh_candidates:
+            if candidate.app_id > 0:
+                self._log(
+                    "[mirror] console fallback app_id mismatch "
+                    f"requested={requested_app_id} selected={candidate.app_id}"
+                )
+                return candidate
+
+        return fresh_candidates[0]
+
+    def _steam_console_log_paths(self) -> Iterable[Path]:
+        homes = self._steam_home_candidates()
+        candidates: list[Path] = []
+        for home in homes:
+            candidates.extend(
+                [
+                    home / ".local" / "share" / "Steam" / "logs" / "console_log.txt",
+                    home / ".steam" / "steam" / "logs" / "console_log.txt",
+                    home / ".steam" / "root" / "logs" / "console_log.txt",
+                    home
+                    / ".var"
+                    / "app"
+                    / "com.valvesoftware.Steam"
+                    / ".local"
+                    / "share"
+                    / "Steam"
+                    / "logs"
+                    / "console_log.txt",
+                ]
+            )
+        seen: set[Path] = set()
+        for path in candidates:
+            if path in seen or not path.is_file():
+                continue
+            seen.add(path)
+            yield path
+
+    def _read_text_tail(self, path: Path, max_bytes: int = 1_000_000) -> str:
+        try:
+            with open(path, "rb") as file:
+                file.seek(0, os.SEEK_END)
+                size = file.tell()
+                file.seek(max(size - max_bytes, 0), os.SEEK_SET)
+                data = file.read()
+            return data.decode("utf-8", errors="ignore")
+        except OSError:
+            return ""
+
+    def _parse_console_loaded_config_line(self, line: str) -> tuple[int, Path, float] | None:
+        if "Loaded Config" not in line or ".vdf" not in line:
+            return None
+        match = re.search(
+            r"Loaded Config.*App ID\s+(\d+).*?:\s*(/.*?\.vdf)\s*$",
+            line,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return None
+        app_id = int(match.group(1))
+        path = Path(match.group(2).strip())
+        ts_match = re.match(r"^\[(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\]", line)
+        if ts_match:
+            try:
+                timestamp = datetime.strptime(ts_match.group(1), "%Y-%m-%d %H:%M:%S").timestamp()
+            except ValueError:
+                timestamp = 0.0
+        else:
+            timestamp = 0.0
+        return app_id, path, timestamp
+
+    def _infer_source_from_path(self, file_path: Path) -> tuple[str, Path]:
+        for parent in file_path.parents:
+            if parent.name == "controller_configs":
+                return "userdata", parent
+            if (
+                parent.name == "config"
+                and parent.parent.name.isdigit()
+                and parent.parent.parent.name == "Steam Controller Configs"
+            ):
+                return "steam_controller_configs", parent
+        return "unknown", file_path.parent
+
+    def _safe_mtime(self, path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    def _is_recent(self, timestamp: float, max_hours: int) -> bool:
+        if timestamp <= 0:
+            return False
+        age_seconds = datetime.now().timestamp() - timestamp
+        return age_seconds <= max_hours * 3600
+
+    def _log_source_layout_metadata(self, layout_text: str) -> None:
+        title = self._extract_vdf_value(layout_text, "title")
+        export_type = self._extract_vdf_value(layout_text, "export_type")
+        progenitor = self._extract_vdf_value(layout_text, "progenitor")
+        url = self._extract_vdf_value(layout_text, "url")
+        publishedfileid = self._extract_vdf_value(layout_text, "publishedfileid")
+        steam_url = self._extract_steam_controller_url(layout_text)
+        self._log(
+            "[mirror] source meta "
+            f"title={title or '-'} export_type={export_type or '-'} "
+            f"progenitor={progenitor or '-'} publishedfileid={publishedfileid or '-'} "
+            f"url={url or '-'} steam_url={steam_url or '-'}"
+        )
+
+    def _extract_vdf_value(self, text: str, key: str) -> str | None:
+        match = re.search(rf'"{re.escape(key)}"\s*"([^"]*)"', text, flags=re.IGNORECASE)
+        if not match:
+            return None
+        value = match.group(1).strip()
+        return value or None
+
+    def _extract_steam_controller_url(self, text: str) -> str | None:
+        match = re.search(r"(steam://controllerconfig/\d+/\d+)", text, flags=re.IGNORECASE)
+        if not match:
+            return None
+        return match.group(1)
 
     def _collect_all_candidates(self, controller_root: Path, source_kind: str) -> list[TemplateCandidate]:
         out: list[TemplateCandidate] = []
