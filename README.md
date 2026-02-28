@@ -30,6 +30,10 @@ and app-specific layout folders such as:
 
 `<userdata>/<steam_user_id>/config/controller_configs/<app_id>/**/*.vdf`
 
+It also scans Steam Controller Configs current layouts, for example:
+
+`~/.local/share/Steam/steamapps/common/Steam Controller Configs/<steam_user_id>/config/**/controller_neptune.vdf`
+
 The plugin writes mirrored layouts to game layouts directory:
 
 `<userdata>/<steam_user_id>/config/controller_configs/<app_id>/<source>_mirror_YYYYmmdd_HHMMSS.vdf`

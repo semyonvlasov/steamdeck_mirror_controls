@@ -14,11 +14,19 @@ except ImportError:  # pragma: no cover
 
 
 class TemplateCandidate:
-    def __init__(self, app_id: int, path: Path, mtime: float, controller_root: Path) -> None:
+    def __init__(
+        self,
+        app_id: int,
+        path: Path,
+        mtime: float,
+        controller_root: Path,
+        source_kind: str,
+    ) -> None:
         self.app_id = app_id
         self.path = path
         self.mtime = mtime
         self.controller_root = controller_root
+        self.source_kind = source_kind
 
     @property
     def is_mirror(self) -> bool:
@@ -119,11 +127,7 @@ class Plugin:
         mirrored = self._append_title_suffix(mirrored)
 
         output_path = self._build_output_path(
-            output_dir=self._resolve_game_layout_output_dir(
-                source.controller_root,
-                app_id,
-                source.path.parent,
-            ),
+            output_dir=self._resolve_output_dir(source, app_id),
             source_path=source.path,
         )
         output_path.write_text(mirrored, encoding="utf-8")
@@ -143,7 +147,16 @@ class Plugin:
         candidates: list[TemplateCandidate] = []
         fallback_candidates: list[TemplateCandidate] = []
         for controller_root in self._controller_config_roots():
-            all_candidates = self._collect_all_candidates(controller_root)
+            all_candidates = self._collect_all_candidates(controller_root, source_kind="userdata")
+            if not all_candidates:
+                continue
+            fallback_candidates.extend(all_candidates)
+            candidates.extend(self._filter_candidates_for_app(all_candidates, app_id))
+
+        for config_root in self._steam_controller_configs_roots():
+            all_candidates = self._collect_all_candidates(
+                config_root, source_kind="steam_controller_configs"
+            )
             if not all_candidates:
                 continue
             fallback_candidates.extend(all_candidates)
@@ -164,8 +177,13 @@ class Plugin:
             return None
 
         non_mirror_fb = [candidate for candidate in fallback_candidates if not candidate.is_mirror]
+        controller_neptune_fb = [
+            candidate
+            for candidate in non_mirror_fb
+            if candidate.path.name.lower() == "controller_neptune.vdf"
+        ]
         non_template_fb = [candidate for candidate in non_mirror_fb if not candidate.is_template_like]
-        source_pool_fb = non_template_fb or non_mirror_fb or fallback_candidates
+        source_pool_fb = controller_neptune_fb or non_template_fb or non_mirror_fb or fallback_candidates
         chosen_fb = max(source_pool_fb, key=lambda candidate: candidate.mtime)
         self._log(
             f"No app-matched layout found for app_id={app_id}; "
@@ -173,7 +191,7 @@ class Plugin:
         )
         return chosen_fb
 
-    def _collect_all_candidates(self, controller_root: Path) -> list[TemplateCandidate]:
+    def _collect_all_candidates(self, controller_root: Path, source_kind: str) -> list[TemplateCandidate]:
         out: list[TemplateCandidate] = []
         for root, _, files in os.walk(controller_root, topdown=True, followlinks=False, onerror=lambda _: None):
             for filename in files:
@@ -192,6 +210,7 @@ class Plugin:
                         path=file_path,
                         mtime=mtime,
                         controller_root=controller_root,
+                        source_kind=source_kind,
                     )
                 )
         return out
@@ -263,6 +282,38 @@ class Plugin:
                     seen.add(controller_configs)
                     yield controller_configs
 
+    def _steam_controller_configs_roots(self) -> Iterable[Path]:
+        homes = self._steam_home_candidates()
+        base_roots: list[Path] = []
+        for home in homes:
+            base_roots.extend(
+                [
+                    home / ".local" / "share" / "Steam" / "steamapps" / "common" / "Steam Controller Configs",
+                    home
+                    / ".var"
+                    / "app"
+                    / "com.valvesoftware.Steam"
+                    / ".local"
+                    / "share"
+                    / "Steam"
+                    / "steamapps"
+                    / "common"
+                    / "Steam Controller Configs",
+                ]
+            )
+
+        seen: set[Path] = set()
+        for base_root in base_roots:
+            if not base_root.is_dir():
+                continue
+            for maybe_user_dir in self._safe_iterdir(base_root):
+                if not maybe_user_dir.is_dir():
+                    continue
+                config_root = maybe_user_dir / "config"
+                if config_root.is_dir() and config_root not in seen:
+                    seen.add(config_root)
+                    yield config_root
+
     def _steam_home_candidates(self) -> list[Path]:
         candidates = [
             os.getenv("DECKY_USER_HOME", "").strip(),
@@ -287,9 +338,12 @@ class Plugin:
         except OSError:
             return []
 
-    def _resolve_game_layout_output_dir(
-        self, controller_root: Path, app_id: int, fallback_dir: Path
-    ) -> Path:
+    def _resolve_output_dir(self, source: TemplateCandidate, app_id: int) -> Path:
+        if source.source_kind == "steam_controller_configs":
+            return source.path.parent
+
+        controller_root = source.controller_root
+        fallback_dir = source.path.parent
         app_dir = controller_root / str(app_id)
         if app_dir.is_dir():
             return app_dir
