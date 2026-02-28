@@ -1,6 +1,6 @@
 # SteamDeck Mirror Controls (Decky Plugin)
 
-Decky plugin to create a mirrored Steam Input template for the current game and save it as a new template.
+Decky plugin to create a mirrored Steam Input layout from the current game's active layout and save it to game layouts.
 
 ## Features
 
@@ -11,8 +11,8 @@ Decky plugin to create a mirrored Steam Input template for the current game and 
   - `D-pad Right <-> B`
 - Mirror touchpad behavior (`left <-> right` touchpad tokens).
 - Mirror stick behavior (`left_stick <-> right_stick` token pairs and common variants).
-- Auto-detect current game app id from Steam UI when possible.
-- Fallback: backend auto-selects the latest non-mirror template found in Steam userdata.
+- Auto-detect current game app id from Steam UI.
+- Uses the current game's layout files (`app_<appid>.vdf` and app-specific layout directories) as source.
 
 ## Backend behavior
 
@@ -22,13 +22,17 @@ Decky plugin to create a mirrored Steam Input template for the current game and 
 - `~/.steam/steam/userdata`
 - `~/.steam/root/userdata`
 
-Then it finds templates under:
+Then it finds game layout sources under:
+
+`<userdata>/<steam_user_id>/config/controller_configs/app_<app_id>.vdf`
+
+and app-specific layout folders such as:
 
 `<userdata>/<steam_user_id>/config/controller_configs/<app_id>/**/*.vdf`
 
-The plugin creates a new file near the source template:
+The plugin writes mirrored layouts to game layouts directory:
 
-`<source_name>_mirror_YYYYmmdd_HHMMSS.vdf`
+`<userdata>/<steam_user_id>/config/controller_configs/<app_id>/<source>_mirror_YYYYmmdd_HHMMSS.vdf`
 
 It also appends `(Mirror <timestamp>)` to template title.
 
@@ -42,6 +46,7 @@ It also appends `(Mirror <timestamp>)` to template title.
 ## Notes
 
 - Token-level mirroring is string-based to stay resilient to different VDF structures.
+- Backend does not write into global/common template locations; output is saved in game layouts.
 - If both options are disabled, the plugin returns an error.
 
 ## Install On Steam Deck

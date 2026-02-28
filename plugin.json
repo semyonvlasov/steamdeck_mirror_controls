@@ -4,7 +4,7 @@
   "api_version": 1,
   "flags": [],
   "publish": {
-    "description": "Create mirrored Steam Input templates from the current game's active template.",
+    "description": "Create mirrored Steam Input game layouts from the current game's active layout.",
     "tags": ["controller", "steam-input", "utility"]
   }
 }
