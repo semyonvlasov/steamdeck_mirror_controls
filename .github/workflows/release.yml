@@ -38,9 +38,12 @@ jobs:
           rm -rf package
           mkdir -p package/steamdeck_mirror_controls
           cp main.py package/steamdeck_mirror_controls/main.py
+          cp package.json package/steamdeck_mirror_controls/package.json
           cp plugin.json package/steamdeck_mirror_controls/plugin.json
           cp -R dist package/steamdeck_mirror_controls/dist
           cp README.md package/steamdeck_mirror_controls/README.md
+          if [ -f LICENSE ]; then cp LICENSE package/steamdeck_mirror_controls/LICENSE; fi
+          if [ -f LICENSE.md ]; then cp LICENSE.md package/steamdeck_mirror_controls/LICENSE.md; fi
           cd package
           zip -r ../steamdeck_mirror_controls.zip steamdeck_mirror_controls
 

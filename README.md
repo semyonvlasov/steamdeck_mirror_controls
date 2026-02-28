@@ -80,6 +80,20 @@ Notes:
 - Workflow artifacts are temporary and not ideal for Decky install links.
 - Release assets are public and stable for manual install.
 
+## Troubleshooting
+
+If Manual Install closes with no error and plugin does not appear:
+
+1. Restart Steam (or reboot Deck) and check again.
+2. Ensure archive contains required files inside plugin directory:
+   - `package.json`
+   - `plugin.json`
+   - `main.py`
+   - `dist/index.js`
+3. Check Decky logs in Desktop Mode:
+   - `/home/deck/homebrew/logs/decky_loader.log`
+   - `/home/deck/homebrew/logs/plugin_loader.log`
+
 ### Example copy from your dev machine
 
 ```bash
