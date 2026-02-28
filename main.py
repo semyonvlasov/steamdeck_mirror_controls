@@ -101,6 +101,11 @@ class Plugin:
         mirror_touchpads: bool,
         mirror_sticks: bool,
     ) -> dict:
+        self._log(
+            "[mirror] begin "
+            f"app_id={app_id} mirror_dpad={mirror_dpad} "
+            f"mirror_touchpads={mirror_touchpads} mirror_sticks={mirror_sticks}"
+        )
         if app_id <= 0:
             return {
                 "ok": False,
@@ -117,7 +122,13 @@ class Plugin:
                 ),
             }
 
+        self._log(
+            "[mirror] source selected "
+            f"kind={source.source_kind} inferred_app_id={source.app_id} "
+            f"path={source.path} {self._path_state(source.path)}"
+        )
         original = source.path.read_text(encoding="utf-8", errors="ignore")
+        self._log(f"[mirror] source bytes={len(original.encode('utf-8', errors='ignore'))} chars={len(original)}")
         mirrored, swaps = self._build_mirrored_template(
             original,
             mirror_dpad=mirror_dpad,
@@ -125,12 +136,18 @@ class Plugin:
             mirror_sticks=mirror_sticks,
         )
         mirrored = self._append_title_suffix(mirrored)
+        self._log(f"[mirror] transformed chars={len(mirrored)} swaps={swaps}")
 
+        output_dir = self._resolve_output_dir(source, app_id)
+        self._log(f"[mirror] output_dir={output_dir} {self._path_state(output_dir)}")
         output_path = self._build_output_path(
-            output_dir=self._resolve_output_dir(source, app_id),
+            output_dir=output_dir,
             source_path=source.path,
         )
-        output_path.write_text(mirrored, encoding="utf-8")
+        self._log(f"[mirror] output_path chosen={output_path}")
+        self._write_text_verified(output_path, mirrored)
+        self._log(f"[mirror] output_path written {self._path_state(output_path)}")
+        self._log(f"[mirror] output_dir latest_vdf={self._latest_vdf_paths(output_dir, limit=8)}")
 
         self._log(
             f"Created mirror template app_id={app_id} source={source.path} output={output_path}"
@@ -146,27 +163,48 @@ class Plugin:
     def _find_current_layout_for_app(self, app_id: int) -> TemplateCandidate | None:
         candidates: list[TemplateCandidate] = []
         fallback_candidates: list[TemplateCandidate] = []
-        for controller_root in self._controller_config_roots():
+        userdata_roots = list(self._controller_config_roots())
+        sc_config_roots = list(self._steam_controller_configs_roots())
+        self._log(
+            "[mirror] scan roots "
+            f"userdata={len(userdata_roots)} "
+            f"steam_controller_configs={len(sc_config_roots)}"
+        )
+
+        for controller_root in userdata_roots:
             all_candidates = self._collect_all_candidates(controller_root, source_kind="userdata")
             if not all_candidates:
+                self._log(f"[mirror] root={controller_root} kind=userdata candidates=0")
                 continue
+            self._log(f"[mirror] root={controller_root} kind=userdata candidates={len(all_candidates)}")
             fallback_candidates.extend(all_candidates)
-            candidates.extend(self._filter_candidates_for_app(all_candidates, app_id))
+            matched = self._filter_candidates_for_app(all_candidates, app_id)
+            self._log(f"[mirror] root={controller_root} kind=userdata matched_app={len(matched)}")
+            candidates.extend(matched)
 
-        for config_root in self._steam_controller_configs_roots():
+        for config_root in sc_config_roots:
             all_candidates = self._collect_all_candidates(
                 config_root, source_kind="steam_controller_configs"
             )
             if not all_candidates:
+                self._log(f"[mirror] root={config_root} kind=steam_controller_configs candidates=0")
                 continue
+            self._log(
+                f"[mirror] root={config_root} kind=steam_controller_configs candidates={len(all_candidates)}"
+            )
             fallback_candidates.extend(all_candidates)
-            candidates.extend(self._filter_candidates_for_app(all_candidates, app_id))
+            matched = self._filter_candidates_for_app(all_candidates, app_id)
+            self._log(
+                f"[mirror] root={config_root} kind=steam_controller_configs matched_app={len(matched)}"
+            )
+            candidates.extend(matched)
 
         if candidates:
             non_mirror = [candidate for candidate in candidates if not candidate.is_mirror]
             current_layout_like = [candidate for candidate in non_mirror if candidate.is_current_layout_like]
             non_template = [candidate for candidate in non_mirror if not candidate.is_template_like]
             source_pool = current_layout_like or non_template or non_mirror or candidates
+            self._log_candidate_preview("app-matched", source_pool)
             chosen = max(source_pool, key=lambda candidate: candidate.mtime)
             self._log(
                 f"Found {len(candidates)} app-matched layouts for app_id={app_id}; selected {chosen.path}"
@@ -184,6 +222,7 @@ class Plugin:
         ]
         non_template_fb = [candidate for candidate in non_mirror_fb if not candidate.is_template_like]
         source_pool_fb = controller_neptune_fb or non_template_fb or non_mirror_fb or fallback_candidates
+        self._log_candidate_preview("fallback", source_pool_fb)
         chosen_fb = max(source_pool_fb, key=lambda candidate: candidate.mtime)
         self._log(
             f"No app-matched layout found for app_id={app_id}; "
@@ -352,6 +391,48 @@ class Plugin:
             return app_dir
         except OSError:
             return fallback_dir
+
+    def _write_text_verified(self, output_path: Path, content: str) -> None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as file:
+            file.write(content)
+            file.flush()
+            os.fsync(file.fileno())
+
+    def _path_state(self, path: Path) -> str:
+        try:
+            if not path.exists():
+                return "exists=0"
+            stat = path.stat()
+            kind = "dir" if path.is_dir() else "file"
+            mtime = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+            return f"exists=1 kind={kind} size={stat.st_size} mtime={mtime}"
+        except OSError as exc:
+            return f"state_error={type(exc).__name__}:{exc}"
+
+    def _latest_vdf_paths(self, directory: Path, limit: int = 8) -> str:
+        try:
+            vdf_files = [path for path in directory.glob("*.vdf") if path.is_file()]
+            if not vdf_files:
+                return "[]"
+            vdf_files.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+            return "[" + ", ".join(str(path) for path in vdf_files[:limit]) + "]"
+        except OSError as exc:
+            return f"[error:{type(exc).__name__}:{exc}]"
+
+    def _log_candidate_preview(
+        self, label: str, candidates: list[TemplateCandidate], limit: int = 6
+    ) -> None:
+        if not candidates:
+            self._log(f"[mirror] {label}: no candidates")
+            return
+        preview = sorted(candidates, key=lambda candidate: candidate.mtime, reverse=True)[:limit]
+        for idx, candidate in enumerate(preview, start=1):
+            mtime = datetime.fromtimestamp(candidate.mtime).strftime("%Y-%m-%d %H:%M:%S")
+            self._log(
+                f"[mirror] {label}[{idx}] kind={candidate.source_kind} app={candidate.app_id} "
+                f"mtime={mtime} path={candidate.path}"
+            )
 
     def _build_output_path(self, output_dir: Path, source_path: Path) -> Path:
         now = datetime.now().strftime("%Y%m%d_%H%M%S")
