@@ -726,13 +726,10 @@ class Plugin:
         total_swaps = 0
 
         if mirror_dpad:
-            transformed, swaps = self._swap_token_pairs(
+            transformed, swaps = self._swap_source_binding_pairs(
                 transformed,
                 [
-                    ("button_a", "dpad_down"),
-                    ("button_b", "dpad_right"),
-                    ("button_x", "dpad_left"),
-                    ("button_y", "dpad_up"),
+                    ("button_diamond", "dpad"),
                 ],
             )
             total_swaps += swaps
@@ -754,9 +751,9 @@ class Plugin:
             transformed, swaps = self._swap_token_pairs(
                 transformed,
                 [
+                    ("joystick", "right_joystick"),
                     ("left_stick", "right_stick"),
                     ("stick_left", "stick_right"),
-                    ("left_joystick", "right_joystick"),
                     ("joystick_left", "joystick_right"),
                     ("left_analog", "right_analog"),
                     ("analog_left", "analog_right"),
@@ -772,22 +769,58 @@ class Plugin:
 
         expanded_pairs = self._expand_case_pairs(pairs)
         for idx, (left, right) in enumerate(expanded_pairs):
-            left_hits = transformed.count(left)
-            right_hits = transformed.count(right)
-            if left_hits == 0 and right_hits == 0:
-                continue
+            token_boundary = r"[A-Za-z0-9_]"
+            left_pattern = re.compile(
+                rf"(?<!{token_boundary}){re.escape(left)}(?!{token_boundary})"
+            )
+            right_pattern = re.compile(
+                rf"(?<!{token_boundary}){re.escape(right)}(?!{token_boundary})"
+            )
 
             marker_left = f"__mirror_left_{idx}_{secrets.token_hex(6)}__"
             marker_right = f"__mirror_right_{idx}_{secrets.token_hex(6)}__"
 
-            transformed = transformed.replace(left, marker_left)
-            transformed = transformed.replace(right, marker_right)
+            transformed, left_hits = left_pattern.subn(marker_left, transformed)
+            transformed, right_hits = right_pattern.subn(marker_right, transformed)
+            if left_hits == 0 and right_hits == 0:
+                continue
+
             transformed = transformed.replace(marker_left, right)
             transformed = transformed.replace(marker_right, left)
 
             total_replacements += left_hits + right_hits
 
         return transformed, total_replacements
+
+    def _swap_source_binding_pairs(
+        self,
+        text: str,
+        pairs: list[tuple[str, str]],
+    ) -> tuple[str, int]:
+        transformed = text
+        total_replacements = 0
+        for left, right in pairs:
+            for state in ("active", "inactive"):
+                left_literal = f'"{left} {state}"'
+                right_literal = f'"{right} {state}"'
+                transformed, hits = self._swap_literal_pair(transformed, left_literal, right_literal)
+                total_replacements += hits
+        return transformed, total_replacements
+
+    def _swap_literal_pair(self, text: str, left: str, right: str) -> tuple[str, int]:
+        marker_left = f"__mirror_lit_left_{secrets.token_hex(6)}__"
+        marker_right = f"__mirror_lit_right_{secrets.token_hex(6)}__"
+        transformed = text
+        left_hits = transformed.count(left)
+        right_hits = transformed.count(right)
+        if left_hits == 0 and right_hits == 0:
+            return text, 0
+
+        transformed = transformed.replace(left, marker_left)
+        transformed = transformed.replace(right, marker_right)
+        transformed = transformed.replace(marker_left, right)
+        transformed = transformed.replace(marker_right, left)
+        return transformed, left_hits + right_hits
 
     def _expand_case_pairs(self, pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
         out: list[tuple[str, str]] = []
