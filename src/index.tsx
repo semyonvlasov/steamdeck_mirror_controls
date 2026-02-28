@@ -13,6 +13,8 @@ type MirrorResult = {
   ok: boolean;
   error?: string;
   app_id?: number;
+  requested_app_id?: number;
+  source_app_id?: number;
   source_path?: string;
   output_path?: string;
   swapped_tokens?: number;
@@ -96,8 +98,16 @@ function Content() {
       }
 
       const appText = result.app_id ? `App ${result.app_id}` : "Current app";
+      const requestText =
+        typeof result.requested_app_id === "number"
+          ? `requested ${result.requested_app_id}`
+          : "requested ?";
+      const sourceText =
+        typeof result.source_app_id === "number" && result.source_app_id > 0
+          ? `source ${result.source_app_id}`
+          : "source ?";
       const swapsText = Number(result.swapped_tokens ?? 0);
-      const nextStatus = `${appText}: saved (${swapsText} swaps)`;
+      const nextStatus = `${appText}: saved (${swapsText} swaps, ${requestText}, ${sourceText})`;
       setStatus(nextStatus);
       toaster.toast({
         title: "Mirror template created",

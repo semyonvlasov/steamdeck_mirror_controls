@@ -49,6 +49,7 @@ class TemplateCandidate:
 class Plugin:
     def __init__(self) -> None:
         self.logger = getattr(decky, "logger", None)
+        self._layout_app_hint_cache: dict[Path, int | None] = {}
 
     async def _main(self) -> None:
         self._log("Mirror Controls backend started")
@@ -148,14 +149,18 @@ class Plugin:
                 ),
             }
 
-        target_app_id = app_id
         if source.app_id > 0 and source.app_id != app_id:
-            target_app_id = source.app_id
             self._log(
-                "[mirror] requested app_id does not match selected source; "
-                f"requested={app_id} selected={source.app_id}. "
-                f"Using selected app_id for output target."
+                "[mirror] source app mismatch; refusing write "
+                f"requested={app_id} source_app={source.app_id} path={source.path}"
             )
+            return {
+                "ok": False,
+                "error": (
+                    f"Selected layout belongs to another app (source app {source.app_id}, "
+                    f"requested app {app_id}). Aborting to avoid cross-app export."
+                ),
+            }
 
         self._log(
             "[mirror] source selected "
@@ -163,6 +168,19 @@ class Plugin:
             f"path={source.path} {self._path_state(source.path)}"
         )
         original = source.path.read_text(encoding="utf-8", errors="ignore")
+        internal_app_hint = self._extract_layout_app_hint(original)
+        if internal_app_hint is not None and internal_app_hint != app_id:
+            self._log(
+                "[mirror] source internal app hint mismatch; refusing write "
+                f"requested={app_id} internal_hint={internal_app_hint} path={source.path}"
+            )
+            return {
+                "ok": False,
+                "error": (
+                    f"Selected layout appears to target app {internal_app_hint}, not {app_id}. "
+                    "Aborting to avoid writing the wrong mirrored config."
+                ),
+            }
         self._log(f"[mirror] source bytes={len(original.encode('utf-8', errors='ignore'))} chars={len(original)}")
         self._log_source_layout_metadata(original, source.path)
         mirrored, swaps = self._build_mirrored_template(
@@ -176,12 +194,12 @@ class Plugin:
         mirrored = self._append_title_suffix(mirrored)
         self._log(f"[mirror] transformed chars={len(mirrored)} swaps={swaps}")
 
-        output_dir = self._resolve_game_layout_output_dir(source, target_app_id)
+        output_dir = self._resolve_game_layout_output_dir(source, app_id)
         self._log(f"[mirror] output_dir={output_dir} {self._path_state(output_dir)}")
         output_path = self._build_game_output_path(
             output_dir=output_dir,
             source_path=source.path,
-            app_id=target_app_id,
+            app_id=app_id,
         )
         self._log(f"[mirror] output_path chosen={output_path}")
         if output_path == source.path:
@@ -197,8 +215,9 @@ class Plugin:
         )
         return {
             "ok": True,
-            "app_id": target_app_id,
+            "app_id": app_id,
             "requested_app_id": app_id,
+            "source_app_id": source.app_id,
             "source_path": str(source.path),
             "output_path": str(output_path),
             "swapped_tokens": swaps,
@@ -206,9 +225,15 @@ class Plugin:
 
     def _find_current_layout_for_app(self, app_id: int) -> TemplateCandidate | None:
         console_candidate = self._find_recent_loaded_layout_from_console(app_id)
+        if console_candidate is not None and self._candidate_matches_requested_app(console_candidate, app_id):
+            self._log(
+                "[mirror] selected from console log "
+                f"app_id={console_candidate.app_id} kind={console_candidate.source_kind} "
+                f"path={console_candidate.path}"
+            )
+            return console_candidate
 
         candidates: list[TemplateCandidate] = []
-        fallback_candidates: list[TemplateCandidate] = []
         userdata_roots = list(self._controller_config_roots())
         sc_config_roots = list(self._steam_controller_configs_roots())
         self._log(
@@ -223,7 +248,6 @@ class Plugin:
                 self._log(f"[mirror] root={controller_root} kind=userdata candidates=0")
                 continue
             self._log(f"[mirror] root={controller_root} kind=userdata candidates={len(all_candidates)}")
-            fallback_candidates.extend(all_candidates)
             matched = self._filter_candidates_for_app(all_candidates, app_id)
             self._log(f"[mirror] root={controller_root} kind=userdata matched_app={len(matched)}")
             candidates.extend(matched)
@@ -238,7 +262,6 @@ class Plugin:
             self._log(
                 f"[mirror] root={config_root} kind=steam_controller_configs candidates={len(all_candidates)}"
             )
-            fallback_candidates.extend(all_candidates)
             matched = self._filter_candidates_for_app(all_candidates, app_id)
             self._log(
                 f"[mirror] root={config_root} kind=steam_controller_configs matched_app={len(matched)}"
@@ -250,69 +273,27 @@ class Plugin:
             current_layout_like = [candidate for candidate in non_mirror if candidate.is_current_layout_like]
             non_template = [candidate for candidate in non_mirror if not candidate.is_template_like]
             source_pool = current_layout_like or non_template or non_mirror or candidates
-            self._log_candidate_preview("app-matched", source_pool)
-            chosen = max(source_pool, key=lambda candidate: candidate.mtime)
+            ranked = sorted(
+                source_pool,
+                key=lambda candidate: self._candidate_sort_key(candidate, app_id),
+                reverse=True,
+            )
+            self._log_candidate_preview("app-matched", ranked)
+            chosen = self._pick_first_app_matching_candidate(ranked, app_id)
+            if chosen is None:
+                self._log(
+                    f"No safe app-matched candidate remained after content validation for app_id={app_id}"
+                )
+                return None
             self._log(
                 f"Found {len(candidates)} app-matched layouts for app_id={app_id}; selected {chosen.path}"
             )
             return chosen
 
-        if (
-            console_candidate is not None
-            and console_candidate.source_kind != "workshop"
-            and console_candidate.app_id == app_id
-        ):
-            self._log(
-                "[mirror] selected from console log (non-workshop) "
-                f"app_id={console_candidate.app_id} kind={console_candidate.source_kind} "
-                f"path={console_candidate.path}"
-            )
-            return console_candidate
-
-        if not fallback_candidates:
-            if console_candidate is not None and console_candidate.app_id == app_id:
-                self._log(
-                    "[mirror] no scanned candidates; selected from console log "
-                    f"app_id={console_candidate.app_id} kind={console_candidate.source_kind} "
-                    f"path={console_candidate.path}"
-                )
-                return console_candidate
-            return None
-
-        non_mirror_fb = [candidate for candidate in fallback_candidates if not candidate.is_mirror]
-        app_specific_requested_fb = [candidate for candidate in non_mirror_fb if candidate.app_id == app_id]
-        app_specific_requested_non_template_fb = [
-            candidate
-            for candidate in app_specific_requested_fb
-            if not candidate.is_template_like
-        ]
-        controller_neptune_desktop_fb = [
-            candidate
-            for candidate in non_mirror_fb
-            if candidate.app_id == 0 and candidate.path.name.lower() == "controller_neptune.vdf"
-        ]
-        source_pool_fb = (
-            app_specific_requested_non_template_fb
-            or app_specific_requested_fb
-            or controller_neptune_desktop_fb
-        )
-        if not source_pool_fb:
-            self._log(
-                f"No app-specific fallback candidate for app_id={app_id}; refusing cross-app fallback"
-            )
-            return None
-        self._log_candidate_preview("fallback", source_pool_fb)
-        chosen_fb = max(source_pool_fb, key=lambda candidate: candidate.mtime)
         self._log(
-            f"No app-matched layout found for app_id={app_id}; "
-            f"fallback to latest layout {chosen_fb.path}"
+            f"No app-matched layout found for app_id={app_id}; refusing desktop/cross-app fallback"
         )
-        if console_candidate is not None and console_candidate.source_kind == "workshop":
-            self._log(
-                "[mirror] workshop console candidate exists but scanned fallback was preferred "
-                f"console={console_candidate.path}"
-            )
-        return chosen_fb
+        return None
 
     def _find_recent_loaded_layout_from_console(self, requested_app_id: int) -> TemplateCandidate | None:
         candidates: list[TemplateCandidate] = []
@@ -356,25 +337,30 @@ class Plugin:
             self._log("[mirror] console candidates found but none are recent enough; ignoring console source")
             return None
 
-        self._log_candidate_preview("console", fresh_candidates, limit=6)
+        same_app_candidates = [
+            candidate for candidate in fresh_candidates if candidate.app_id == requested_app_id
+        ]
+        if not same_app_candidates:
+            self._log_candidate_preview("console", fresh_candidates, limit=6)
+            self._log(
+                "[mirror] console had no same-app candidate; "
+                f"requested={requested_app_id}. Ignoring console fallback to avoid cross-app selection."
+            )
+            return None
+
+        self._log_candidate_preview("console", same_app_candidates, limit=6)
 
         preferred_kinds = ("steam_controller_configs", "userdata", "workshop", "unknown")
         prioritized = sorted(
-            fresh_candidates,
-            key=lambda candidate: preferred_kinds.index(candidate.source_kind)
-            if candidate.source_kind in preferred_kinds
-            else len(preferred_kinds),
+            same_app_candidates,
+            key=lambda candidate: (
+                preferred_kinds.index(candidate.source_kind)
+                if candidate.source_kind in preferred_kinds
+                else len(preferred_kinds),
+                -candidate.mtime,
+            ),
         )
-
-        for candidate in prioritized:
-            if candidate.app_id == requested_app_id:
-                return candidate
-
-        self._log(
-            "[mirror] console had no same-app candidate; "
-            f"requested={requested_app_id}. Ignoring console fallback to avoid cross-app selection."
-        )
-        return None
+        return prioritized[0] if prioritized else None
 
     def _steam_console_log_paths(self) -> Iterable[Path]:
         homes = self._steam_home_candidates()
@@ -462,6 +448,98 @@ class Plugin:
             return False
         age_seconds = datetime.now().timestamp() - timestamp
         return age_seconds <= max_hours * 3600
+
+    def _candidate_sort_key(self, candidate: TemplateCandidate, requested_app_id: int) -> tuple[int, float]:
+        score = 0
+        name = candidate.path.name.lower()
+        parent_name = candidate.path.parent.name.lower()
+
+        if candidate.source_kind == "steam_controller_configs":
+            score += 300
+        elif candidate.source_kind == "userdata":
+            score += 200
+        elif candidate.source_kind == "workshop":
+            score += 100
+
+        if parent_name == str(requested_app_id):
+            score += 80
+        if candidate.is_current_layout_like:
+            score += 60
+        if name.startswith("controller_"):
+            score += 40
+        if not candidate.is_template_like:
+            score += 20
+        if not candidate.is_mirror:
+            score += 10
+
+        return score, candidate.mtime
+
+    def _pick_first_app_matching_candidate(
+        self, candidates: list[TemplateCandidate], requested_app_id: int
+    ) -> TemplateCandidate | None:
+        for candidate in candidates:
+            if self._candidate_matches_requested_app(candidate, requested_app_id):
+                return candidate
+        return None
+
+    def _candidate_matches_requested_app(
+        self, candidate: TemplateCandidate, requested_app_id: int
+    ) -> bool:
+        if candidate.app_id > 0 and candidate.app_id != requested_app_id:
+            self._log(
+                "[mirror] skip candidate due app mismatch "
+                f"requested={requested_app_id} candidate_app={candidate.app_id} path={candidate.path}"
+            )
+            return False
+
+        hint_app_id = self._extract_layout_app_hint_from_file(candidate.path)
+        if hint_app_id is None:
+            return True
+
+        if hint_app_id != requested_app_id:
+            self._log(
+                "[mirror] skip candidate due internal app hint mismatch "
+                f"requested={requested_app_id} hint={hint_app_id} path={candidate.path}"
+            )
+            return False
+        return True
+
+    def _extract_layout_app_hint_from_file(self, path: Path) -> int | None:
+        sentinel = object()
+        cached = self._layout_app_hint_cache.get(path, sentinel)
+        if cached is not sentinel:
+            return cached
+
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            self._layout_app_hint_cache[path] = None
+            return None
+
+        hint = self._extract_layout_app_hint(text)
+        self._layout_app_hint_cache[path] = hint
+        return hint
+
+    def _extract_layout_app_hint(self, text: str) -> int | None:
+        url_match = re.search(
+            r"steam://controllerconfig/(\d+)/\d+",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if url_match:
+            app_id = int(url_match.group(1))
+            if app_id > 0:
+                return app_id
+
+        for key in ("app_id", "appid"):
+            match = re.search(rf'"{re.escape(key)}"\s*"(\d+)"', text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            app_id = int(match.group(1))
+            if app_id > 0:
+                return app_id
+
+        return None
 
     def _log_source_layout_metadata(self, layout_text: str, source_path: Path) -> None:
         title = self._extract_vdf_value(layout_text, "title")
