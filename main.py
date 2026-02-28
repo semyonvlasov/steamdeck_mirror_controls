@@ -202,6 +202,15 @@ class Plugin:
             app_id=app_id,
         )
         self._log(f"[mirror] output_path chosen={output_path}")
+        if output_path.exists() and output_path != source.path:
+            try:
+                previous = output_path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                previous = ""
+            if previous and previous != mirrored:
+                backup_path = self._build_backup_path(output_dir, output_path)
+                self._write_text_verified(backup_path, previous)
+                self._log(f"[mirror] existing output backed up to {backup_path}")
         if output_path == source.path:
             backup_path = self._build_backup_path(output_dir, source.path)
             self._write_text_verified(backup_path, original)
@@ -810,15 +819,7 @@ class Plugin:
             )
 
     def _build_game_output_path(self, output_dir: Path, source_path: Path, app_id: int) -> Path:
-        now = datetime.now().strftime("%Y%m%d_%H%M%S")
-        stem = source_path.stem
-        suffix = source_path.suffix or ".vdf"
-        candidate = output_dir / f"{stem}_app_{app_id}_mirror_{now}{suffix}"
-        index = 1
-        while candidate.exists():
-            candidate = output_dir / f"{stem}_app_{app_id}_mirror_{now}_{index}{suffix}"
-            index += 1
-        return candidate
+        return output_dir / "controller_neptune.vdf"
 
     def _build_backup_path(self, output_dir: Path, source_path: Path) -> Path:
         now = datetime.now().strftime("%Y%m%d_%H%M%S")
