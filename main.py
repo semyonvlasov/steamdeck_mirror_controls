@@ -39,7 +39,7 @@ class Plugin:
         app_id: int | dict[str, Any] = 0,
         mirror_dpad: bool = True,
         mirror_touchpads: bool = True,
-        mirror_sticks: bool = False,
+        mirror_sticks: bool = True,
     ) -> dict:
         # Compatibility: handle both positional args and dict payload calls.
         if isinstance(app_id, dict):

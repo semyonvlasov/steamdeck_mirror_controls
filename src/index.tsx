@@ -65,7 +65,7 @@ async function detectCurrentAppId(): Promise<number | undefined> {
 function Content() {
   const [mirrorDpad, setMirrorDpad] = useState<boolean>(true);
   const [mirrorTouchpads, setMirrorTouchpads] = useState<boolean>(true);
-  const [mirrorSticks, setMirrorSticks] = useState<boolean>(false);
+  const [mirrorSticks, setMirrorSticks] = useState<boolean>(true);
   const [isBusy, setIsBusy] = useState<boolean>(false);
   const [status, setStatus] = useState<string>("Ready");
 
