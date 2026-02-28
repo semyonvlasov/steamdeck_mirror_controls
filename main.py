@@ -62,6 +62,8 @@ class Plugin:
         mirror_dpad: bool = True,
         mirror_touchpads: bool = True,
         mirror_sticks: bool = True,
+        mirror_menu_position: bool = True,
+        mirror_gyro_buttons: bool = True,
     ) -> dict:
         # Compatibility: handle both positional args and dict payload calls.
         if isinstance(app_id, dict):
@@ -70,8 +72,20 @@ class Plugin:
             mirror_dpad = bool(payload.get("mirror_dpad", mirror_dpad))
             mirror_touchpads = bool(payload.get("mirror_touchpads", mirror_touchpads))
             mirror_sticks = bool(payload.get("mirror_sticks", mirror_sticks))
+            mirror_menu_position = bool(
+                payload.get("mirror_menu_position", mirror_menu_position)
+            )
+            mirror_gyro_buttons = bool(
+                payload.get("mirror_gyro_buttons", mirror_gyro_buttons)
+            )
 
-        if not mirror_dpad and not mirror_touchpads and not mirror_sticks:
+        if (
+            not mirror_dpad
+            and not mirror_touchpads
+            and not mirror_sticks
+            and not mirror_menu_position
+            and not mirror_gyro_buttons
+        ):
             return {
                 "ok": False,
                 "error": "Nothing selected to mirror. Enable at least one option.",
@@ -79,7 +93,9 @@ class Plugin:
         try:
             self._log(
                 "create_mirror_template called "
-                f"app_id={app_id} dpad={mirror_dpad} touchpads={mirror_touchpads} sticks={mirror_sticks}"
+                f"app_id={app_id} dpad={mirror_dpad} touchpads={mirror_touchpads} "
+                f"sticks={mirror_sticks} menu_position={mirror_menu_position} "
+                f"gyro_buttons={mirror_gyro_buttons}"
             )
             return await asyncio.to_thread(
                 self._create_mirror_template_sync,
@@ -87,6 +103,8 @@ class Plugin:
                 bool(mirror_dpad),
                 bool(mirror_touchpads),
                 bool(mirror_sticks),
+                bool(mirror_menu_position),
+                bool(mirror_gyro_buttons),
             )
         except Exception as exc:
             self._log(
@@ -104,11 +122,15 @@ class Plugin:
         mirror_dpad: bool,
         mirror_touchpads: bool,
         mirror_sticks: bool,
+        mirror_menu_position: bool,
+        mirror_gyro_buttons: bool,
     ) -> dict:
         self._log(
             "[mirror] begin "
             f"app_id={app_id} mirror_dpad={mirror_dpad} "
-            f"mirror_touchpads={mirror_touchpads} mirror_sticks={mirror_sticks}"
+            f"mirror_touchpads={mirror_touchpads} mirror_sticks={mirror_sticks} "
+            f"mirror_menu_position={mirror_menu_position} "
+            f"mirror_gyro_buttons={mirror_gyro_buttons}"
         )
         if app_id <= 0:
             return {
@@ -148,6 +170,8 @@ class Plugin:
             mirror_dpad=mirror_dpad,
             mirror_touchpads=mirror_touchpads,
             mirror_sticks=mirror_sticks,
+            mirror_menu_position=mirror_menu_position,
+            mirror_gyro_buttons=mirror_gyro_buttons,
         )
         mirrored = self._append_title_suffix(mirrored)
         self._log(f"[mirror] transformed chars={len(mirrored)} swaps={swaps}")
@@ -721,6 +745,8 @@ class Plugin:
         mirror_dpad: bool,
         mirror_touchpads: bool,
         mirror_sticks: bool,
+        mirror_menu_position: bool,
+        mirror_gyro_buttons: bool,
     ) -> tuple[str, int]:
         transformed = template_text
         total_swaps = 0
@@ -748,17 +774,19 @@ class Plugin:
             total_swaps += swaps
 
         if mirror_sticks:
+            stick_pairs = self._stick_pairs_for_text(transformed)
             transformed, swaps = self._swap_token_pairs(
                 transformed,
-                [
-                    ("joystick", "right_joystick"),
-                    ("left_stick", "right_stick"),
-                    ("stick_left", "stick_right"),
-                    ("joystick_left", "joystick_right"),
-                    ("left_analog", "right_analog"),
-                    ("analog_left", "analog_right"),
-                ],
+                stick_pairs,
             )
+            total_swaps += swaps
+
+        if mirror_menu_position:
+            transformed, swaps = self._mirror_touch_menu_position_x(transformed)
+            total_swaps += swaps
+
+        if mirror_gyro_buttons:
+            transformed, swaps = self._mirror_gyro_button_tokens(transformed)
             total_swaps += swaps
 
         return transformed, total_swaps
@@ -797,15 +825,64 @@ class Plugin:
         text: str,
         pairs: list[tuple[str, str]],
     ) -> tuple[str, int]:
-        transformed = text
+        lines = text.splitlines(keepends=True)
+        out_lines: list[str] = []
         total_replacements = 0
-        for left, right in pairs:
-            for state in ("active", "inactive"):
-                left_literal = f'"{left} {state}"'
-                right_literal = f'"{right} {state}"'
-                transformed, hits = self._swap_literal_pair(transformed, left_literal, right_literal)
-                total_replacements += hits
-        return transformed, total_replacements
+        in_group_source_bindings = False
+        pending_group_source_bindings = False
+        group_source_depth = 0
+
+        for line in lines:
+            if not in_group_source_bindings and '"group_source_bindings"' in line.lower():
+                pending_group_source_bindings = True
+                out_lines.append(line)
+                continue
+
+            if pending_group_source_bindings:
+                out_lines.append(line)
+                group_source_depth += line.count("{")
+                group_source_depth -= line.count("}")
+                if "{" in line:
+                    in_group_source_bindings = True
+                    pending_group_source_bindings = False
+                continue
+
+            if in_group_source_bindings:
+                swapped_line, replacements = self._swap_group_source_binding_line(line, pairs)
+                total_replacements += replacements
+                out_lines.append(swapped_line)
+                group_source_depth += line.count("{")
+                group_source_depth -= line.count("}")
+                if group_source_depth <= 0:
+                    in_group_source_bindings = False
+                    group_source_depth = 0
+                continue
+
+            out_lines.append(line)
+
+        return "".join(out_lines), total_replacements
+
+    def _swap_group_source_binding_line(
+        self, line: str, pairs: list[tuple[str, str]]
+    ) -> tuple[str, int]:
+        match = re.match(r'^(\s*"[^"]+"\s*")([^"]*)(".*)$', line)
+        if not match:
+            return line, 0
+
+        value = match.group(2)
+        value_parts = re.match(r"^(\s*)(\S+)(.*)$", value)
+        if not value_parts:
+            return line, 0
+
+        leading_ws = value_parts.group(1)
+        token = value_parts.group(2)
+        trailing = value_parts.group(3)
+        swapped_token = self._swap_token_value(token, pairs)
+        if swapped_token == token:
+            return line, 0
+
+        swapped_value = f"{leading_ws}{swapped_token}{trailing}"
+        return f"{match.group(1)}{swapped_value}{match.group(3)}", 1
 
     def _swap_literal_pair(self, text: str, left: str, right: str) -> tuple[str, int]:
         marker_left = f"__mirror_lit_left_{secrets.token_hex(6)}__"
@@ -821,6 +898,111 @@ class Plugin:
         transformed = transformed.replace(marker_left, right)
         transformed = transformed.replace(marker_right, left)
         return transformed, left_hits + right_hits
+
+    def _swap_token_value(self, token: str, pairs: list[tuple[str, str]]) -> str:
+        for left, right in pairs:
+            if token == left:
+                return right
+            if token == right:
+                return left
+            if token.lower() == left.lower():
+                return right.lower() if token.islower() else right
+            if token.lower() == right.lower():
+                return left.lower() if token.islower() else left
+        return token
+
+    def _stick_pairs_for_text(self, text: str) -> list[tuple[str, str]]:
+        has_left_joystick = self._token_hits(text, "left_joystick") > 0
+        has_right_joystick = self._token_hits(text, "right_joystick") > 0
+        joystick_pair = ("joystick", "left_joystick") if has_left_joystick and not has_right_joystick else (
+            "joystick",
+            "right_joystick",
+        )
+        return [
+            joystick_pair,
+            ("left_stick", "right_stick"),
+            ("stick_left", "stick_right"),
+            ("joystick_left", "joystick_right"),
+            ("left_analog", "right_analog"),
+            ("analog_left", "analog_right"),
+        ]
+
+    def _token_hits(self, text: str, token: str) -> int:
+        token_boundary = r"[A-Za-z0-9_]"
+        pattern = re.compile(
+            rf"(?<!{token_boundary}){re.escape(token)}(?!{token_boundary})",
+            flags=re.IGNORECASE,
+        )
+        return len(pattern.findall(text))
+
+    def _mirror_touch_menu_position_x(self, text: str) -> tuple[str, int]:
+        pattern = re.compile(
+            r'("touch_menu_position_x"\s*")([^"]*)(")',
+            flags=re.IGNORECASE,
+        )
+        replacements = 0
+
+        def repl(match: re.Match[str]) -> str:
+            nonlocal replacements
+            current_value = match.group(2).strip()
+            mirrored = self._mirror_position_value(current_value)
+            if mirrored is None or mirrored == current_value:
+                return match.group(0)
+            replacements += 1
+            return f'{match.group(1)}{mirrored}{match.group(3)}'
+
+        return pattern.sub(repl, text), replacements
+
+    def _mirror_position_value(self, value: str) -> str | None:
+        try:
+            numeric = float(value)
+        except ValueError:
+            return None
+
+        if numeric < 0:
+            return None
+        if numeric <= 1.0:
+            scale = 1.0
+        elif numeric <= 100.0:
+            scale = 100.0
+        else:
+            return None
+
+        mirrored = max(0.0, min(scale, scale - numeric))
+        if "." in value:
+            decimals = max(len(value.split(".", 1)[1]), 1)
+            return f"{mirrored:.{decimals}f}"
+        return str(int(round(mirrored)))
+
+    def _mirror_gyro_button_tokens(self, text: str) -> tuple[str, int]:
+        lines = text.splitlines(keepends=True)
+        total_replacements = 0
+        out_lines: list[str] = []
+        gyro_pairs = [
+            ("left_trigger", "right_trigger"),
+            ("left_bumper", "right_bumper"),
+            ("left_trackpad", "right_trackpad"),
+            ("left_touchpad", "right_touchpad"),
+            ("left_pad", "right_pad"),
+            ("left_stick", "right_stick"),
+            ("left_joystick", "right_joystick"),
+            ("joystick_left", "joystick_right"),
+            ("stick_left", "stick_right"),
+            ("button_back_left", "button_back_right"),
+            ("back_left", "back_right"),
+            ("button_l4", "button_r4"),
+            ("l4", "r4"),
+        ]
+
+        for line in lines:
+            if "gyro" not in line.lower():
+                out_lines.append(line)
+                continue
+            transformed_line, replacements = self._swap_token_pairs(line, gyro_pairs)
+            total_replacements += replacements
+            out_lines.append(transformed_line)
+
+        return "".join(out_lines), total_replacements
 
     def _expand_case_pairs(self, pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
         out: list[tuple[str, str]] = []

@@ -45,6 +45,8 @@ It also appends `(Mirror <timestamp>)` to template title.
 - `Mirror D-pad + ABXY`
 - `Mirror Touchpads`
 - `Mirror Left/Right Sticks`
+- `Mirror Menu Position` (mirrors `touch_menu_position_x`, default on)
+- `Mirror Gyro Buttons` (mirrors left/right activation tokens on gyro lines, default on)
 - `Create Mirror Template` button
 
 ## Notes

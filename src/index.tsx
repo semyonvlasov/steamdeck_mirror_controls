@@ -23,7 +23,9 @@ const createMirrorTemplateCall = callable<
     app_id: number,
     mirror_dpad: boolean,
     mirror_touchpads: boolean,
-    mirror_sticks: boolean
+    mirror_sticks: boolean,
+    mirror_menu_position: boolean,
+    mirror_gyro_buttons: boolean
   ],
   MirrorResult
 >("create_mirror_template");
@@ -66,6 +68,8 @@ function Content() {
   const [mirrorDpad, setMirrorDpad] = useState<boolean>(true);
   const [mirrorTouchpads, setMirrorTouchpads] = useState<boolean>(true);
   const [mirrorSticks, setMirrorSticks] = useState<boolean>(true);
+  const [mirrorMenuPosition, setMirrorMenuPosition] = useState<boolean>(true);
+  const [mirrorGyroButtons, setMirrorGyroButtons] = useState<boolean>(true);
   const [isBusy, setIsBusy] = useState<boolean>(false);
   const [status, setStatus] = useState<string>("Ready");
 
@@ -82,7 +86,9 @@ function Content() {
         appId ?? 0,
         mirrorDpad,
         mirrorTouchpads,
-        mirrorSticks
+        mirrorSticks,
+        mirrorMenuPosition,
+        mirrorGyroButtons
       );
       if (!result?.ok) {
         setStatus(result?.error ?? "Failed to create mirror template");
@@ -125,6 +131,20 @@ function Content() {
           label="Mirror Left/Right Sticks"
           checked={mirrorSticks}
           onChange={(value: boolean) => setMirrorSticks(value)}
+        />
+      </PanelSectionRow>
+      <PanelSectionRow>
+        <ToggleField
+          label="Mirror Menu Position"
+          checked={mirrorMenuPosition}
+          onChange={(value: boolean) => setMirrorMenuPosition(value)}
+        />
+      </PanelSectionRow>
+      <PanelSectionRow>
+        <ToggleField
+          label="Mirror Gyro Buttons"
+          checked={mirrorGyroButtons}
+          onChange={(value: boolean) => setMirrorGyroButtons(value)}
         />
       </PanelSectionRow>
       <PanelSectionRow>
