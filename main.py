@@ -926,14 +926,14 @@ class Plugin:
             total_swaps += swaps
 
         if mirror_dpad and pre_has_diamond and not pre_has_dpad and pre_joystick_groups:
-            transformed, swaps = self._add_source_binding_entry(
+            transformed, swaps = self._clone_group_for_source(
                 transformed, pre_joystick_groups[0], "button_diamond active"
             )
             total_swaps += swaps
         elif mirror_dpad and pre_has_dpad and not pre_has_diamond:
             pre_dpad_groups = self._get_source_group_ids(template_text, "dpad")
             if pre_dpad_groups:
-                transformed, swaps = self._add_source_binding_entry(
+                transformed, swaps = self._clone_group_for_source(
                     transformed, pre_dpad_groups[0], "dpad active"
                 )
                 total_swaps += swaps
@@ -1337,6 +1337,71 @@ class Plugin:
             out_lines.append(line)
 
         return "".join(out_lines), added
+
+    def _clone_group_for_source(
+        self, text: str, original_group_id: str, source_and_state: str
+    ) -> tuple[str, int]:
+        """Clone group *original_group_id* with a new unique ID and bind it to *source_and_state*."""
+        max_id = self._find_max_group_id(text)
+        new_id = str(max_id + 1)
+
+        cloned_block = self._clone_group_block(text, original_group_id, new_id)
+        if cloned_block is None:
+            return text, 0
+
+        text = self._insert_before_first_preset(text, cloned_block)
+        text, count = self._add_source_binding_entry(text, new_id, source_and_state)
+        return text, count
+
+    def _clone_group_block(self, text: str, group_id: str, new_id: str) -> str | None:
+        """Return a copy of the group block for *group_id* with its ID replaced by *new_id*."""
+        lines = text.splitlines(keepends=True)
+        collecting = False
+        pending = False
+        group_lines: list[str] = []
+        depth = 0
+
+        for line in lines:
+            stripped = line.strip()
+
+            if not collecting and not pending:
+                if stripped.startswith('"group"'):
+                    pending = True
+                    group_lines = [line]
+                    if "{" in stripped:
+                        collecting = True
+                        pending = False
+                        depth = stripped.count("{") - stripped.count("}")
+                continue
+
+            if pending:
+                group_lines.append(line)
+                if "{" in stripped:
+                    collecting = True
+                    pending = False
+                    depth = stripped.count("{") - stripped.count("}")
+                continue
+
+            if collecting:
+                group_lines.append(line)
+                depth += line.count("{") - line.count("}")
+
+                if depth <= 0:
+                    block = "".join(group_lines)
+                    id_match = re.search(r'"id"\s*"(\d+)"', block)
+                    if id_match and id_match.group(1) == group_id:
+                        return re.sub(
+                            r'("id"\s*")' + re.escape(group_id) + '"',
+                            r'\g<1>' + new_id + '"',
+                            block,
+                            count=1,
+                        )
+                    collecting = False
+                    group_lines = []
+                    depth = 0
+                continue
+
+        return None
 
     def _token_hits(self, text: str, token: str) -> int:
         token_boundary = r"[A-Za-z0-9_]"
