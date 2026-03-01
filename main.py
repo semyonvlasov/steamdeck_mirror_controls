@@ -844,6 +844,15 @@ class Plugin:
         transformed = template_text
         total_swaps = 0
 
+        # Detect which sources exist before any swaps (for orphan filling).
+        # When a swap pair has only one side present, the swap leaves
+        # the original source name unbound ("orphaned").
+        pre_joystick_groups = self._get_source_group_ids(transformed, "joystick")
+        pre_has_joystick = len(pre_joystick_groups) > 0
+        pre_has_right_joystick = len(self._get_source_group_ids(transformed, "right_joystick")) > 0
+        pre_has_diamond = len(self._get_source_group_ids(transformed, "button_diamond")) > 0
+        pre_has_dpad = len(self._get_source_group_ids(transformed, "dpad")) > 0
+
         if mirror_dpad:
             transformed, swaps = self._swap_source_binding_pairs(
                 transformed,
@@ -904,6 +913,30 @@ class Plugin:
                 pairs=all_activation_pairs,
             )
             total_swaps += swaps
+
+        # Fill orphaned sources created by one-sided swaps.
+        # E.g. original has "joystick" but no "right_joystick" — after swap
+        # joystick→right_joystick, the left stick is unbound and needs a
+        # mouse_joystick group.  Same pattern for button_diamond↔dpad.
+        if mirror_sticks and pre_has_joystick and not pre_has_right_joystick:
+            transformed, swaps = self._add_mouse_joystick_group(transformed, "joystick")
+            total_swaps += swaps
+        elif mirror_sticks and pre_has_right_joystick and not pre_has_joystick:
+            transformed, swaps = self._add_mouse_joystick_group(transformed, "right_joystick")
+            total_swaps += swaps
+
+        if mirror_dpad and pre_has_diamond and not pre_has_dpad and pre_joystick_groups:
+            transformed, swaps = self._add_source_binding_entry(
+                transformed, pre_joystick_groups[0], "button_diamond active"
+            )
+            total_swaps += swaps
+        elif mirror_dpad and pre_has_dpad and not pre_has_diamond:
+            pre_dpad_groups = self._get_source_group_ids(template_text, "dpad")
+            if pre_dpad_groups:
+                transformed, swaps = self._add_source_binding_entry(
+                    transformed, pre_dpad_groups[0], "dpad active"
+                )
+                total_swaps += swaps
 
         return transformed, total_swaps
 
@@ -1155,6 +1188,155 @@ class Plugin:
             ("l4", "r4"),
             ("l5", "r5"),
         ]
+
+    def _get_source_group_ids(self, text: str, source_token: str) -> list[str]:
+        """Return group IDs whose source starts with *source_token* in group_source_bindings."""
+        group_ids: list[str] = []
+        in_gsb = False
+        pending_gsb = False
+        depth = 0
+
+        for line in text.splitlines():
+            if not in_gsb and '"group_source_bindings"' in line.lower():
+                pending_gsb = True
+                continue
+
+            if pending_gsb:
+                depth += line.count("{")
+                depth -= line.count("}")
+                if "{" in line:
+                    in_gsb = True
+                    pending_gsb = False
+                continue
+
+            if in_gsb:
+                depth += line.count("{")
+                depth -= line.count("}")
+
+                match = re.match(r'^\s*"([^"]+)"\s*"([^"]*)"', line)
+                if match:
+                    gid = match.group(1)
+                    value = match.group(2)
+                    tokens = value.split()
+                    if tokens and tokens[0].lower() == source_token.lower():
+                        group_ids.append(gid)
+
+                if depth <= 0:
+                    in_gsb = False
+                    depth = 0
+                continue
+
+        return group_ids
+
+    def _find_max_group_id(self, text: str) -> int:
+        """Return the highest numeric ``"id"`` value found in group blocks."""
+        max_id = -1
+        in_group = False
+        pending_group = False
+
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not in_group and stripped.startswith('"group"'):
+                pending_group = True
+                if "{" in stripped:
+                    in_group = True
+                    pending_group = False
+                continue
+
+            if pending_group and "{" in stripped:
+                in_group = True
+                pending_group = False
+                continue
+
+            if in_group:
+                id_match = re.match(r'^\s*"id"\s*"(\d+)"', line)
+                if id_match:
+                    gid = int(id_match.group(1))
+                    if gid > max_id:
+                        max_id = gid
+                if "}" in stripped:
+                    in_group = False
+                continue
+
+        return max_id
+
+    def _insert_before_first_preset(self, text: str, block: str) -> str:
+        """Insert *block* immediately before the first ``"preset"`` line."""
+        match = re.search(r'^\t"preset"\s*$', text, re.MULTILINE)
+        if match:
+            return text[: match.start()] + block + text[match.start() :]
+        return text + block
+
+    def _add_mouse_joystick_group(
+        self, text: str, source_name: str
+    ) -> tuple[str, int]:
+        """Create a new ``mouse_joystick`` group and bind it to *source_name* active."""
+        max_id = self._find_max_group_id(text)
+        new_id = str(max_id + 1)
+
+        new_group_block = (
+            '\t"group"\n'
+            "\t{\n"
+            f'\t\t"id"\t\t"{new_id}"\n'
+            '\t\t"mode"\t\t"mouse_joystick"\n'
+            "\t}\n"
+        )
+        text = self._insert_before_first_preset(text, new_group_block)
+        text, count = self._add_source_binding_entry(text, new_id, f"{source_name} active")
+        return text, count
+
+    def _add_source_binding_entry(
+        self, text: str, group_id: str, source_and_state: str
+    ) -> tuple[str, int]:
+        """Append ``"group_id"  "source_and_state"`` to non-empty group_source_bindings blocks."""
+        new_line = f'\t\t\t"{group_id}"\t\t"{source_and_state}"\n'
+
+        lines = text.splitlines(keepends=True)
+        out_lines: list[str] = []
+        in_gsb = False
+        pending_gsb = False
+        depth = 0
+        gsb_has_content = False
+        added = 0
+
+        for line in lines:
+            if not in_gsb and '"group_source_bindings"' in line.lower():
+                pending_gsb = True
+                out_lines.append(line)
+                continue
+
+            if pending_gsb:
+                out_lines.append(line)
+                depth += line.count("{")
+                depth -= line.count("}")
+                if "{" in line:
+                    in_gsb = True
+                    pending_gsb = False
+                    gsb_has_content = False
+                continue
+
+            if in_gsb:
+                new_depth = depth + line.count("{") - line.count("}")
+
+                if re.match(r'^\s*"[^"]+"\s*"[^"]*"', line):
+                    gsb_has_content = True
+
+                if new_depth <= 0:
+                    if gsb_has_content:
+                        out_lines.append(new_line)
+                        added += 1
+                    out_lines.append(line)
+                    in_gsb = False
+                    depth = 0
+                    continue
+
+                depth = new_depth
+                out_lines.append(line)
+                continue
+
+            out_lines.append(line)
+
+        return "".join(out_lines), added
 
     def _token_hits(self, text: str, token: str) -> int:
         token_boundary = r"[A-Za-z0-9_]"
