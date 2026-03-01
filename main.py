@@ -733,7 +733,7 @@ class Plugin:
             return []
 
     def _resolve_game_layout_output_dir(self, source: TemplateCandidate, app_id: int) -> Path:
-        candidates = self._game_layout_output_dir_candidates(source, app_id)
+        candidates = self._game_layout_output_dir_candidates(app_id)
         self._log(
             "[mirror] output_dir_candidates="
             + "[" + ", ".join(str(path) for path in candidates) + "]"
@@ -754,18 +754,13 @@ class Plugin:
         fallback.mkdir(parents=True, exist_ok=True)
         return fallback
 
-    def _game_layout_output_dir_candidates(self, source: TemplateCandidate, app_id: int) -> list[Path]:
+    def _game_layout_output_dir_candidates(self, app_id: int) -> list[Path]:
         out: list[Path] = []
 
-        # Primary target: Steam Controller Configs game layout directory.
+        # Always write to the user's game layout directory,
+        # regardless of where the source config came from.
         for config_root in self._steam_controller_configs_roots():
             out.append(config_root / str(app_id))
-
-        # Keep near source as next best options.
-        if source.source_kind in ("steam_controller_configs", "userdata"):
-            out.append(source.controller_root / str(app_id))
-        out.append(source.path.parent / str(app_id))
-        out.append(source.path.parent)
 
         seen: set[Path] = set()
         deduped: list[Path] = []
